@@ -24,3 +24,8 @@ Desktop.ini
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
+
+# Cache / profiling
+.cache/
+*.profraw
+*.profdata
