@@ -9,6 +9,11 @@
 
 ### Added
 
+- CI pipeline: GitHub Actions workflow (`.github/workflows/ci.yml`), локальный скрипт
+  `scripts/ci-check.sh`, pre-commit hooks (`.pre-commit-config.yaml`), конфигурация `act`
+  для локального прогона GitHub Actions.
+- Установлены недостающие инструменты: cppcheck, iwyu, clazy, codechecker, qmlformat,
+  qmllint, qmltyperegistrar, pre-commit.
 - Проектные инструкции для AI-агента разработки (`AGENTS.md`) и каталог кандидатов на
   переиспользование (`docs/REUSE_CANDIDATES.md`).
 - Конфигурации качества кода: `.clang-format`, `.clang-tidy`.
@@ -18,3 +23,9 @@
 - Интеграция с CTest, ASan+UBSan, llvm-cov, clang-tidy.
 - Документация сборки и запуска (`README.md`).
 - Файл `.gitignore` для build-каталогов, IDE и OS-артефактов.
+
+### Changed
+
+- Обновлён `.gitignore`: исключены артефакты покрытия (`*.profraw`, `*.profdata`),
+  кеш-директория `.cache/`.
+- Обновлён `docs/STATIC_ANALYSIS_TOOLS.md`: состояние инструментов в окружении.
