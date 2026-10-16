@@ -1,24 +1,28 @@
 """Conan recipe for the Audio Assistant project.
 
-Qt 6.4.2 is the primary dependency.
+Qt 6.4.2 is the primary dependency target. The Conan requirement is currently
+disabled (see ``requires`` below): on Linux, Qt is taken from the system
+(apt/libqt6*-dev) because ConanCenter lacks pre-built binaries for
+Linux/Clang. Uncomment ``requires`` once pre-built binaries are available,
+or for Windows/macOS builds.
 
-On Linux, Qt is used from the system (apt/libqt6*-dev) because ConanCenter
-currently lacks pre-built binaries for Linux/Clang. When pre-built binaries
-become available or for Windows/macOS builds, uncomment `requires`.
+Usage (from the project root, Linux with Clang 18 and Ninja):
 
-Usage:
+    # 1. Install build dependencies using the in-repo profile
+    #    (profiles/clang18; currently only build-time tooling, no packages)
+    conan install . -of build/conan --build=missing -pr profiles/clang18
 
-    # Install dependencies (currently only build-time tools)
-    conan install . -of build/conan --build=missing -pr clang18
-
-    # Configure CMake with Conan toolchain
-    cmake -S . -B build \
+    # 2. Configure CMake with the Conan-generated toolchain.
+    #    The toolchain is included after project(), so the compiler must be
+    #    selected explicitly (the profile's settings are not enough).
+    CC=clang-18 CXX=clang++-18 cmake -S . -B build \
         -DCONAN_BUILD_DIR=build/conan \
         -DCMAKE_BUILD_TYPE=Debug \
         -G Ninja
 
-    # Build
+    # 3. Build and test
     cmake --build build
+    ctest --test-dir build --output-on-failure
 
     # Without Conan (system Qt):
     CC=clang-18 CXX=clang++-18 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -G Ninja
@@ -31,12 +35,15 @@ from conan.tools.cmake import cmake_layout, CMakeDeps, CMakeToolchain
 
 class AudioAssistantConan(ConanFile):
     name = "audio-assistant"
+    # Must stay in sync with project(VERSION ...) in CMakeLists.txt.
     version = "0.1.0"
 
     description = "Audio Assistant — MVP build skeleton"
     topics = "audio", "assistant", "qt"
-    url = "https://github.com/stc-arduino/audio-assistant"
-    license = "Proprietary"
+    url = "https://github.com/ARONEZG/qt_audio_assistant"
+    # License is deliberately not declared: there is no LICENSE file yet.
+    # Set this once licensing is decided.
+    # license = "Proprietary"
 
     settings = "os", "arch", "compiler", "build_type"
 
@@ -63,6 +70,8 @@ class AudioAssistantConan(ConanFile):
     #     "qt/*:with_doubleconversion": True,
     #     "qt/*:with_dbus": True,
     # }
+    # Currently no managed runtime dependencies; Conan only generates the
+    # CMake toolchain/build files (build-time tooling).
     requires = ()
 
     def layout(self):

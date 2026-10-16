@@ -1,0 +1,21 @@
+# Profile for Clang 18 on Linux x86_64 (Debug).
+#
+# This profile defines build settings for Conan. CMake still needs explicit
+# CC=clang-18 CXX=clang++-18 because the Conan toolchain is loaded after
+# project() via include() (see CMakeLists.txt).
+#
+# Usage:
+#   conan install . -of build/conan --build=missing -pr profiles/clang18
+
+[settings]
+os=Linux
+arch=x86_64
+build_type=Debug
+compiler=clang
+compiler.version=18
+compiler.cppstd=20
+
+[conf]
+tools.cmake.cmaketoolchain:generator=Ninja
+tools.system.package_manager:mode=install
+tools.system.package_manager:sudo=True

@@ -43,6 +43,25 @@ cmake --build build --parallel
 
 Проект требует Clang; конфигурация завершится ошибкой с другим компилятором.
 
+## Сборка с Conan (опционально)
+
+Conan 2.x используется для генерации CMake toolchain (зависимости Qt через ConanCenter
+пока отключены — см. `conanfile.py`). Требуется `conan` 2.x в `PATH`.
+
+```bash
+# Профиль зафиксирован в репозитории: profiles/clang18 (Linux x86_64, Clang 18, Debug)
+conan install . -of build/conan --build=missing -pr profiles/clang18
+
+CC=clang-18 CXX=clang++-18 cmake -S . -B build \
+    -DCONAN_BUILD_DIR=build/conan \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -G Ninja
+cmake --build build --parallel
+```
+
+Компилятор всё равно задаётся явно через `CC`/`CXX`: Conan toolchain подключается
+через `include()` уже после `project()`, поэтому он не управляет выбором компилятора.
+
 ## Тесты
 
 ```bash
@@ -60,6 +79,8 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
 - **Linux (Ubuntu 24.04, x86_64)**: проверено полностью — Debug/Release, ASan+UBSan,
   clang-format, clang-tidy, Qt Test. Отдельной графической сессии во время проверки не было;
   GUI запускался только с `QT_QPA_PLATFORM=offscreen`.
+  Сборка через Conan проверена только на Linux/Ninja; конфигурация с другими генераторами
+  (Visual Studio, Xcode) обрабатывается defensively, но не проверялась.
 - **Windows**: не проверено.
 - **macOS**: не проверено.
 - **Android**: не входит в текущий этап.

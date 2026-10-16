@@ -25,6 +25,10 @@ CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 
-# Conan (managed dependencies)
-conan/
-conanfile.lock
+# Conan
+# Conan-generated artifacts already land under build/ (which is ignored).
+# conanfile.lock is deliberately NOT committed: dependency resolution is not
+# pinned yet (no managed runtime dependencies). Commit it once version
+# pinning via lockfiles is adopted.
+CMakeUserPresets.json
+__pycache__/
