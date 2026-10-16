@@ -18,3 +18,5 @@
 - Интеграция с CTest, ASan+UBSan, llvm-cov, clang-tidy.
 - Документация сборки и запуска (`README.md`).
 - Файл `.gitignore` для build-каталогов, IDE и OS-артефактов.
+- Conan 2.x интеграция: `conanfile.py` для управления зависимостями (Qt 6.4.2 через ConanCenter).
+- Опциональная поддержка Conan в `CMakeLists.txt` через переменную `CONAN_BUILD_DIR`.
