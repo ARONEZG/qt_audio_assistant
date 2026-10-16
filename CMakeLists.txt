@@ -108,6 +108,59 @@ find_package(Qt6 REQUIRED COMPONENTS
     Test
 )
 
+# ── Strict warning profile (zero-warning policy, AGENTS.md §3) ──
+# Один INTERFACE-таргет вместо дублирования флагов в каждой цели.
+add_library(audio-assistant-strict-warnings INTERFACE)
+target_compile_options(audio-assistant-strict-warnings INTERFACE
+    -std=c++20
+    -Wall -Wextra -Wpedantic -Werror
+    -Weverything
+    # Qt и moc-генерированный код используют конструкции, несовместимые с
+    # C++98 (nullptr, constinit и т. п.); эти диагностики неприменимы к C++20/Qt.
+    -Wno-c++98-compat
+    -Wno-c++98-compat-pedantic
+    -Wno-c++20-compat
+    -Wno-unknown-warning-option
+    # Clang 18: экспериментальная -Wunsafe-buffer-usage из -Weverything срабатывает
+    # на moc-сгенерированном коде (reinterpret_cast над void** для аргументов
+    # слотов), который создаёт moc и нельзя пометить как системный. Собственный
+    # код проекта буферных конструкций не содержит; диагностика остаётся в силе
+    # для clang-tidy (bugprone-* / clang-analyzer-*) на наших TU.
+    -Wno-unsafe-buffer-usage
+    # -Wpadded из -Weverything срабатывает на выравнивающих вставках в структурах,
+    # генерируемых moc для метаданных Q_TEST (qt_meta_stringdata_*: массив
+    # QByteArrayData + строковые данные). Это упаковка, специфичная для
+    # сгенерированного Qt-кода, а не собственного; padding собственных структур
+    # остаётся в зоне ответственности clang-tidy (clang-analyzer/performance).
+    -Wno-padded
+    -Wconversion -Wsign-conversion -Wimplicit-fallthrough
+    -Wcast-align -Wcast-qual -Wdouble-promotion -Wformat=2
+    -Wnull-dereference -Woverloaded-virtual -Wshadow-all
+    -Wswitch-enum -Wundef -Wunreachable-code -Wunused
+)
+
+# ── AppController library ───────────────────────────────────
+add_library(appcontroller STATIC
+    src/AppController.cpp
+)
+
+set_target_properties(appcontroller PROPERTIES
+    CXX_EXTENSIONS OFF
+    AUTOMOC ON
+)
+
+target_compile_options(appcontroller PRIVATE
+    $<TARGET_PROPERTY:audio-assistant-strict-warnings,INTERFACE_COMPILE_OPTIONS>
+)
+
+target_include_directories(appcontroller PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+)
+
+target_link_libraries(appcontroller PUBLIC
+    Qt6::Core
+)
+
 # ── QML module ──────────────────────────────────────────────
 # Put Main.qml at the root of the module resources (default behaviour
 # would keep the qml/ subdirectory, resulting in qrc:/qt/qml/AudioAssistant/qml/Main.qml).
@@ -136,24 +189,12 @@ set_target_properties(audio-assistant PROPERTIES
 )
 
 target_compile_options(audio-assistant PRIVATE
-    -std=c++20
-    -Wall -Wextra -Wpedantic -Werror
-    -Weverything
-    # Qt and moc-generated code use C++98-incompatible constructs (nullptr,
-    # constinit, etc.); these diagnostics are not applicable to C++20/Qt.
-    -Wno-c++98-compat
-    -Wno-c++98-compat-pedantic
-    -Wno-c++20-compat
-    -Wno-unknown-warning-option
-    -Wconversion -Wsign-conversion -Wimplicit-fallthrough
-    -Wcast-align -Wcast-qual -Wdouble-promotion -Wformat=2
-    -Wnull-dereference -Woverloaded-virtual -Wshadow-all
-    -Wswitch-enum -Wundef -Wunreachable-code -Wunused
+    $<TARGET_PROPERTY:audio-assistant-strict-warnings,INTERFACE_COMPILE_OPTIONS>
 )
 
 target_link_libraries(audio-assistant PRIVATE
+    appcontroller
     audio-assistant-qml
-    Qt6::Core
     Qt6::Gui
     Qt6::Qml
     Qt6::QuickControls2
@@ -162,38 +203,36 @@ target_link_libraries(audio-assistant PRIVATE
 # ── Tests ───────────────────────────────────────────────────
 enable_testing()
 
-qt_add_executable(tst_main
+function(audio_assistant_add_test target sources)
+    qt_add_executable(${target} ${sources})
+
+    set_target_properties(${target} PROPERTIES
+        CXX_EXTENSIONS OFF
+    )
+
+    target_compile_options(${target} PRIVATE
+        $<TARGET_PROPERTY:audio-assistant-strict-warnings,INTERFACE_COMPILE_OPTIONS>
+    )
+
+    target_link_libraries(${target} PRIVATE
+        ${ARGN}
+        Qt6::Test
+    )
+
+    add_test(NAME ${target} COMMAND ${target})
+    set_tests_properties(${target} PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+endfunction()
+
+audio_assistant_add_test(tst_main
     tests/tst_main.cpp
-)
-
-set_target_properties(tst_main PROPERTIES
-    CXX_EXTENSIONS OFF
-)
-
-target_compile_options(tst_main PRIVATE
-    -std=c++20
-    -Wall -Wextra -Wpedantic -Werror
-    -Weverything
-    # Qt and moc-generated code use C++98-incompatible constructs (nullptr,
-    # constinit, etc.); these diagnostics are not applicable to C++20/Qt.
-    -Wno-c++98-compat
-    -Wno-c++98-compat-pedantic
-    -Wno-c++20-compat
-    -Wno-unknown-warning-option
-    -Wconversion -Wsign-conversion -Wimplicit-fallthrough
-    -Wcast-align -Wcast-qual -Wdouble-promotion -Wformat=2
-    -Wnull-dereference -Woverloaded-virtual -Wshadow-all
-    -Wswitch-enum -Wundef -Wunreachable-code -Wunused
-)
-
-target_link_libraries(tst_main PRIVATE
     audio-assistant-qml
     Qt6::Gui
     Qt6::Qml
-    Qt6::Test
 )
 
-add_test(NAME tst_main COMMAND tst_main)
-set_tests_properties(tst_main PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+audio_assistant_add_test(tst_appcontroller
+    tests/tst_appcontroller.cpp
+    appcontroller
 )
