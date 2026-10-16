@@ -5,10 +5,16 @@
 
 class TestQmlLoad : public QObject {
     Q_OBJECT
+public:
+    explicit TestQmlLoad(QObject* parent = nullptr);
+
 private slots:
     void test_loadRootComponent_data();
     void test_loadRootComponent();
 };
+
+TestQmlLoad::TestQmlLoad(QObject* parent) : QObject(parent) {
+}
 
 void TestQmlLoad::test_loadRootComponent_data() {
     QTest::addColumn<QString>("resourceUrl");
