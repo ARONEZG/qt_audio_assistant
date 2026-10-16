@@ -15,7 +15,7 @@ int main(int argc, char* argv[]) {
     AppController controller;
 
     QQmlApplicationEngine engine;
-    engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
+    engine.rootContext()->setContextProperty(QString::fromUtf8(controllerContext::kPropertyName), &controller);
 
     engine.load(QUrl(QStringLiteral("qrc:/qt/qml/AudioAssistant/Main.qml")));
 

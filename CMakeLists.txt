@@ -149,8 +149,8 @@ set_target_properties(appcontroller PROPERTIES
     AUTOMOC ON
 )
 
-target_compile_options(appcontroller PRIVATE
-    $<TARGET_PROPERTY:audio-assistant-strict-warnings,INTERFACE_COMPILE_OPTIONS>
+target_link_libraries(appcontroller PRIVATE
+    audio-assistant-strict-warnings
 )
 
 target_include_directories(appcontroller PUBLIC
@@ -188,11 +188,8 @@ set_target_properties(audio-assistant PROPERTIES
     CXX_EXTENSIONS OFF
 )
 
-target_compile_options(audio-assistant PRIVATE
-    $<TARGET_PROPERTY:audio-assistant-strict-warnings,INTERFACE_COMPILE_OPTIONS>
-)
-
 target_link_libraries(audio-assistant PRIVATE
+    audio-assistant-strict-warnings
     appcontroller
     audio-assistant-qml
     Qt6::Gui
@@ -210,11 +207,8 @@ function(audio_assistant_add_test target sources)
         CXX_EXTENSIONS OFF
     )
 
-    target_compile_options(${target} PRIVATE
-        $<TARGET_PROPERTY:audio-assistant-strict-warnings,INTERFACE_COMPILE_OPTIONS>
-    )
-
     target_link_libraries(${target} PRIVATE
+        audio-assistant-strict-warnings
         ${ARGN}
         Qt6::Test
     )
@@ -227,9 +221,11 @@ endfunction()
 
 audio_assistant_add_test(tst_main
     tests/tst_main.cpp
+    appcontroller
     audio-assistant-qml
     Qt6::Gui
     Qt6::Qml
+    Qt6::Quick
 )
 
 audio_assistant_add_test(tst_appcontroller

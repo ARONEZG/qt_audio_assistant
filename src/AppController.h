@@ -2,6 +2,13 @@
 
 #include <QObject>
 #include <QString>
+#include <string_view>
+
+// Имя context property, через которое QML обращается к AppController.
+// Объявлено в C++ один раз и используется и точкой входа, и тестами.
+namespace controllerContext {
+inline constexpr std::string_view kPropertyName = "controller";
+}  // namespace controllerContext
 
 // Экранный статус приложения, доступный QML. Пока строка; расширение до
 // перечисления статусов и привязки к внутренним состояниям — отдельный инкремент.

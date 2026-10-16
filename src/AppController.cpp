@@ -9,7 +9,10 @@ namespace {
 constexpr std::string_view kInitialStatus = "Каркас приложения собран. Функции пока не реализованы.";
 }  // namespace
 
-AppController::AppController(QObject* parent) : QObject(parent), status_(QString::fromUtf8(kInitialStatus)) {
+AppController::AppController(QObject* parent) : QObject(parent) {
+    // fromUtf8(): исходная строка хранится как UTF-8 string_view (не содержит
+    // NUL), конвертация выполняется явно в месте владения, а не в привязке.
+    status_ = QString::fromUtf8(kInitialStatus);
 }
 
 QString AppController::status() const {
