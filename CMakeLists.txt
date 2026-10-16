@@ -13,15 +13,15 @@ project(audio-assistant
 # Conan 2's cmake_layout() places the toolchain at a generator-
 # specific path. For single-config generators (Ninja, Makefiles) it is:
 #   <CONAN_BUILD_DIR>/build/<CMAKE_BUILD_TYPE>/generators/conan_toolchain.cmake
-# For multi-config generators (Visual Studio, Xcode) it is:
-#   <CONAN_BUILD_DIR>/build/<config>/generators/conan_toolchain.cmake
-# where <config> is one of the CMAKE_CONFIGURATION_TYPES.
+# For multi-config generators (Visual Studio, Xcode, Ninja Multi-Config) it is:
+#   <CONAN_BUILD_DIR>/build/generators/conan_toolchain.cmake
+# (no configuration subdirectory).
 #
 # This script probes those locations plus the flat fallback
 #   <CONAN_BUILD_DIR>/conan_toolchain.cmake
 #
-# Only Linux/Ninja has been verified (AGENTS.md §2.1); other
-# generator layouts are probed defensively.
+# Only Linux/Ninja has been verified (AGENTS.md §2.1); multi-config
+# paths are probed based on the documented cmake_layout() behaviour.
 #
 # Usage (from the project root):
 #   conan install . -of build/conan --build=missing -pr profiles/clang18
@@ -31,18 +31,15 @@ if(DEFINED CONAN_BUILD_DIR)
 
     # Candidate toolchain paths, most specific first.
     set(_conan_toolchain_candidates)
-    if(NOT CMAKE_BUILD_TYPE STREQUAL "")
+    if(CMAKE_BUILD_TYPE)
         list(APPEND _conan_toolchain_candidates
             "${_conan_dir}/build/${CMAKE_BUILD_TYPE}/generators/conan_toolchain.cmake")
     endif()
-    if(DEFINED CMAKE_CONFIGURATION_TYPES)
-        foreach(_cfg IN LISTS CMAKE_CONFIGURATION_TYPES)
-            list(APPEND _conan_toolchain_candidates
-                "${_conan_dir}/build/${_cfg}/generators/conan_toolchain.cmake")
-        endforeach()
-    endif()
-    # Fallback to common build types — the Conan install may have been run
-    # with a different build_type than the current CMAKE_BUILD_TYPE.
+    # Multi-config layout (no configuration subdirectory).
+    list(APPEND _conan_toolchain_candidates
+        "${_conan_dir}/build/generators/conan_toolchain.cmake")
+    # Fallback to the toolchain of a previously installed build_type —
+    # the Conan install may have been run with a different CMAKE_BUILD_TYPE.
     if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
         list(APPEND _conan_toolchain_candidates
             "${_conan_dir}/build/Debug/generators/conan_toolchain.cmake")
