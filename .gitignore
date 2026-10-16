@@ -1,0 +1,26 @@
+# Build
+build*/
+Build/
+out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Qt Creator / Qt Designer
+*.user
+*.user.*
+*.autosave
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
