@@ -18,3 +18,7 @@
 - Интеграция с CTest, ASan+UBSan, llvm-cov, clang-tidy.
 - Документация сборки и запуска (`README.md`).
 - Файл `.gitignore` для build-каталогов, IDE и OS-артефактов.
+- Conan 2.x skeleton: `conanfile.py` и профиль `profiles/clang18` для будущего управления
+  зависимостями. Зависимость Qt через ConanCenter пока отключена (`requires = ()`); на Linux
+  Qt берётся из системы.
+- Опциональная поддержка Conan в `CMakeLists.txt` через переменную `CONAN_BUILD_DIR`.

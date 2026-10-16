@@ -6,6 +6,77 @@ project(audio-assistant
     LANGUAGES CXX
 )
 
+# ── Conan dependency support ────────────────────────────────
+# If CONAN_BUILD_DIR is set, load the Conan-generated toolchain
+# and prepend its module/prefix paths so find_package(Qt6 …) works.
+#
+# Conan 2's cmake_layout() places the toolchain at a generator-
+# specific path. For single-config generators (Ninja, Makefiles) it is:
+#   <CONAN_BUILD_DIR>/build/<CMAKE_BUILD_TYPE>/generators/conan_toolchain.cmake
+# For multi-config generators (Visual Studio, Xcode, Ninja Multi-Config) it is:
+#   <CONAN_BUILD_DIR>/build/generators/conan_toolchain.cmake
+# (no configuration subdirectory).
+#
+# This script probes those locations plus the flat fallback
+#   <CONAN_BUILD_DIR>/conan_toolchain.cmake
+#
+# Only Linux/Ninja has been verified (AGENTS.md §2.1); multi-config
+# paths are probed based on the documented cmake_layout() behaviour.
+#
+# Usage (from the project root):
+#   conan install . -of build/conan --build=missing -pr profiles/clang18
+#   cmake -S . -B build -DCONAN_BUILD_DIR=build/conan -DCMAKE_BUILD_TYPE=Debug -G Ninja
+if(DEFINED CONAN_BUILD_DIR)
+    set(_conan_dir "${CONAN_BUILD_DIR}")
+
+    # Candidate toolchain paths, most specific first.
+    set(_conan_toolchain_candidates)
+    if(CMAKE_BUILD_TYPE)
+        list(APPEND _conan_toolchain_candidates
+            "${_conan_dir}/build/${CMAKE_BUILD_TYPE}/generators/conan_toolchain.cmake")
+    endif()
+    # Multi-config layout (no configuration subdirectory).
+    list(APPEND _conan_toolchain_candidates
+        "${_conan_dir}/build/generators/conan_toolchain.cmake")
+    # Fallback to the toolchain of a previously installed build_type —
+    # the Conan install may have been run with a different CMAKE_BUILD_TYPE.
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        list(APPEND _conan_toolchain_candidates
+            "${_conan_dir}/build/Debug/generators/conan_toolchain.cmake")
+    endif()
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+        list(APPEND _conan_toolchain_candidates
+            "${_conan_dir}/build/Release/generators/conan_toolchain.cmake")
+    endif()
+    list(APPEND _conan_toolchain_candidates "${_conan_dir}/conan_toolchain.cmake")
+
+    set(_conan_toolchain)
+    foreach(_candidate IN LISTS _conan_toolchain_candidates)
+        if(EXISTS "${_candidate}")
+            set(_conan_toolchain "${_candidate}")
+            break()
+        endif()
+    endforeach()
+
+    if(NOT _conan_toolchain)
+        message(FATAL_ERROR
+            "Conan toolchain not found.\n"
+            "Searched:\n"
+            "  ${_conan_toolchain_candidates}\n"
+            "Run:\n"
+            "  conan install . -of ${_conan_dir} --build=missing -pr profiles/clang18\n"
+        )
+    endif()
+    message(STATUS "Loading Conan toolchain: ${_conan_toolchain}")
+
+    # Prepend generators directory so CMakeDeps-generated files are found
+    get_filename_component(_conan_gen "${_conan_toolchain}" DIRECTORY)
+    list(PREPEND CMAKE_MODULE_PATH "${_conan_gen}")
+    list(PREPEND CMAKE_PREFIX_PATH "${_conan_gen}")
+
+    include("${_conan_toolchain}")
+endif()
+
 # ── Export compile_commands.json for static analysis ─────────
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -23,7 +94,9 @@ if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 # ── Qt 6 components ─────────────────────────────────────────
-find_package(Qt6 REQUIRED COMPONENTS
+# Qt 6.4.2 is the single source of truth for the Qt version; it must stay in
+# sync with `requires = "qt/6.4.2"` in conanfile.py.
+find_package(Qt6 6.4.2 REQUIRED COMPONENTS
     Core
     Gui
     Qml
