@@ -47,7 +47,7 @@
 `clang-format`, `qmlformat`, `qmllint`, `clang-tidy`, `clazy`, `cppcheck`.
 
 - Анализируется только собственный код (`src/`, `tests/`, `qml/`). Сторонние библиотеки
-  (LLMQore в `_deps/`), moc/qml-генерация и Qt build helpers исключены: `clang-tidy`/`clazy`
+  (Conan-пакеты spdlog/LLMQore), moc/qml-генерация и Qt build helpers исключены: `clang-tidy`/`clazy`
   получают список translation units, а `CodeChecker` — отфильтрованную базу компиляции.
 - `clang-tidy` и `clazy` распараллелены (по умолчанию `nproc`; переопределение — `ANALYSIS_JOBS=N`).
 - Локальные сборки идут через `ccache` (если установлен), поэтому повторные прогоны

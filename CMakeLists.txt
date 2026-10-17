@@ -6,9 +6,29 @@ project(audio-assistant
     LANGUAGES CXX
 )
 
+# ── Qt discovery for IDE presets ────────────────────────────
+# Conan-generated CMakePresets.json is used from VS Code's CMake Tools,
+# but Conan does not provide Qt on Linux (aqtinstall installs it into
+# ~/Qt). Presets cannot pass CMAKE_PREFIX_PATH portably, so the default
+# Qt 6.8.3 location is probed here and prepended — the Conan toolchain
+# paths keep priority for Conan packages (spdlog), while find_package(Qt6)
+# resolves to the aqtinstall prefix. -DCMAKE_PREFIX_PATH still wins for
+# other entries; a duplicate Qt entry is harmless.
+set(_qt_prefix_candidates
+    "$ENV{HOME}/Qt/6.8.3/gcc_64"
+    "/opt/Qt/6.8.3/gcc_64"
+)
+foreach(_qt_candidate IN LISTS _qt_prefix_candidates)
+    if(IS_DIRECTORY "${_qt_candidate}")
+        list(PREPEND CMAKE_PREFIX_PATH "${_qt_candidate}")
+        message(STATUS "Qt prefix: ${_qt_candidate}")
+        break()
+    endif()
+endforeach()
+
 # ── Conan dependency support ────────────────────────────────
 # If CONAN_BUILD_DIR is set, load the Conan-generated toolchain
-# and prepend its module/prefix paths so find_package(Qt6 …) works.
+# and prepend its module/prefix paths so find_package(spdlog …) works.
 #
 # Conan 2's cmake_layout() places the toolchain at a generator-
 # specific path. For single-config generators (Ninja, Makefiles) it is:
@@ -23,46 +43,114 @@ project(audio-assistant
 # Only Linux/Ninja has been verified (AGENTS.md §2.1); multi-config
 # paths are probed based on the documented cmake_layout() behaviour.
 #
+# If no toolchain is present, `conan install` is run automatically for the
+# current build type, so IDE builds (VS Code CMake Tools "Build" button)
+# work on a fresh clone without a manual Conan step. CI and
+# scripts/ci-check.sh run `conan install` themselves first, so this branch
+# is a no-op for them.
+#
 # Usage (from the project root):
 #   conan install . -of build/conan --build=missing -pr profiles/clang18
 #   cmake -S . -B build -DCONAN_BUILD_DIR=build/conan -DCMAKE_BUILD_TYPE=Debug -G Ninja
-if(DEFINED CONAN_BUILD_DIR)
-    set(_conan_dir "${CONAN_BUILD_DIR}")
-
-    # Candidate toolchain paths, most specific first.
-    set(_conan_toolchain_candidates)
+function(_audio_assistant_find_conan_toolchain conan_dir result_var)
+    set(_candidates)
     if(CMAKE_BUILD_TYPE)
-        list(APPEND _conan_toolchain_candidates
-            "${_conan_dir}/build/${CMAKE_BUILD_TYPE}/generators/conan_toolchain.cmake")
+        list(APPEND _candidates
+            "${conan_dir}/build/${CMAKE_BUILD_TYPE}/generators/conan_toolchain.cmake")
     endif()
     # Multi-config layout (no configuration subdirectory).
-    list(APPEND _conan_toolchain_candidates
-        "${_conan_dir}/build/generators/conan_toolchain.cmake")
+    list(APPEND _candidates
+        "${conan_dir}/build/generators/conan_toolchain.cmake")
     # Fallback to the toolchain of a previously installed build_type —
     # the Conan install may have been run with a different CMAKE_BUILD_TYPE.
     if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
-        list(APPEND _conan_toolchain_candidates
-            "${_conan_dir}/build/Debug/generators/conan_toolchain.cmake")
+        list(APPEND _candidates
+            "${conan_dir}/build/Debug/generators/conan_toolchain.cmake")
     endif()
     if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
-        list(APPEND _conan_toolchain_candidates
-            "${_conan_dir}/build/Release/generators/conan_toolchain.cmake")
+        list(APPEND _candidates
+            "${conan_dir}/build/Release/generators/conan_toolchain.cmake")
     endif()
-    list(APPEND _conan_toolchain_candidates "${_conan_dir}/conan_toolchain.cmake")
+    list(APPEND _candidates "${conan_dir}/conan_toolchain.cmake")
 
-    set(_conan_toolchain)
-    foreach(_candidate IN LISTS _conan_toolchain_candidates)
+    set(_found)
+    foreach(_candidate IN LISTS _candidates)
         if(EXISTS "${_candidate}")
-            set(_conan_toolchain "${_candidate}")
+            set(_found "${_candidate}")
             break()
         endif()
     endforeach()
+    set(${result_var} "${_found}" PARENT_SCOPE)
+endfunction()
+
+if(DEFINED CONAN_BUILD_DIR)
+    set(_conan_dir "${CONAN_BUILD_DIR}")
+
+    _audio_assistant_find_conan_toolchain("${_conan_dir}" _conan_toolchain)
+
+    if(NOT _conan_toolchain)
+        # The managed dependencies (spdlog) are not installed for this build
+        # type yet. Install them automatically so one-click IDE builds work.
+        find_program(_conan_exe conan)
+        if(NOT _conan_exe)
+            message(FATAL_ERROR
+                "Conan toolchain not found and 'conan' is not in PATH.\n"
+                "Searched under: ${_conan_dir}\n"
+                "Install Conan and run:\n"
+                "  conan install . -of ${_conan_dir} --build=missing -pr profiles/clang18\n"
+            )
+        endif()
+
+        set(_conan_build_type "${CMAKE_BUILD_TYPE}")
+        if(NOT _conan_build_type)
+            set(_conan_build_type "Debug")
+        endif()
+
+        # The in-repo LLMQore recipe must be in the Conan cache before the
+        # package can be resolved/built; --build=missing below then produces it.
+        message(STATUS "Conan export recipes/llmqore (automatic)")
+        execute_process(
+            COMMAND "${_conan_exe}" export "${CMAKE_CURRENT_SOURCE_DIR}/recipes/llmqore"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            RESULT_VARIABLE _conan_export_result
+            OUTPUT_VARIABLE _conan_export_out
+            ERROR_VARIABLE _conan_export_err
+        )
+        if(NOT _conan_export_result EQUAL 0)
+            message(FATAL_ERROR
+                "Automatic 'conan export recipes/llmqore' failed.\n"
+                "${_conan_export_out}\n${_conan_export_err}"
+            )
+        endif()
+
+        message(STATUS "Conan install (automatic, build_type=${_conan_build_type})")
+        execute_process(
+            COMMAND "${_conan_exe}" install .
+                -of "${_conan_dir}"
+                --build=missing
+                -pr:b "${CMAKE_CURRENT_SOURCE_DIR}/profiles/clang18"
+                -pr "${CMAKE_CURRENT_SOURCE_DIR}/profiles/clang18"
+                -s:b build_type=${_conan_build_type}
+                -s build_type=${_conan_build_type}
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            RESULT_VARIABLE _conan_install_result
+            OUTPUT_VARIABLE _conan_install_out
+            ERROR_VARIABLE _conan_install_err
+        )
+        if(NOT _conan_install_result EQUAL 0)
+            message(FATAL_ERROR
+                "Automatic 'conan install' failed.\n"
+                "${_conan_install_out}\n${_conan_install_err}"
+            )
+        endif()
+
+        _audio_assistant_find_conan_toolchain("${_conan_dir}" _conan_toolchain)
+    endif()
 
     if(NOT _conan_toolchain)
         message(FATAL_ERROR
             "Conan toolchain not found.\n"
-            "Searched:\n"
-            "  ${_conan_toolchain_candidates}\n"
+            "Searched under: ${_conan_dir}\n"
             "Run:\n"
             "  conan install . -of ${_conan_dir} --build=missing -pr profiles/clang18\n"
         )
@@ -98,9 +186,12 @@ endif()
 # aqtinstall (see conanfile.py), not by the system packages; point CMake at it
 # with -DCMAKE_PREFIX_PATH=$HOME/Qt/6.8.3/gcc_64 (the path is deliberately not
 # hardcoded here).
+# Network and Concurrent are required by LLMQore (Qt Networking / CONCURRENT).
 find_package(Qt6 6.8.3 REQUIRED COMPONENTS
     Core
     Gui
+    Network
+    Concurrent
     Qml
     Quick
     QuickControls2
@@ -153,20 +244,12 @@ target_compile_options(audio-assistant-qt-warnings INTERFACE
 )
 
 # ── LLMQore (LLM client library) ────────────────────────────
-# Pinned to the released tag v0.8.0 (MIT). Fetched as a SYSTEM subproject so
-# its headers are consumed as system headers and its own warning settings do
-# not leak into project targets. Only build-time auxiliary targets are forced
-# off; the library itself is linked PRIVATE into the executable.
-include(FetchContent)
-set(LLMQORE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(LLMQORE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(LLMQORE_BUILD_MCP_BRIDGE OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(LLMQore
-    SYSTEM
-    GIT_REPOSITORY https://github.com/Palm1r/llmqore.git
-    GIT_TAG v0.8.0
-)
-FetchContent_MakeAvailable(LLMQore)
+# LLMQore is a managed Conan dependency (llmqore/0.8.0, recipe in
+# recipes/llmqore) — the single source of truth for its version. Conan fetches,
+# builds and packages it; the CMakeDeps-generated config exposes the upstream
+# LLMQore::LLMQore target in the Conan generators directory. The library is
+# linked PRIVATE into the executable.
+find_package(LLMQore REQUIRED)
 
 # ── Domain library ──────────────────────────────────────────
 # Framework-agnostic chat domain (immutable values, provider role interface,
@@ -233,9 +316,13 @@ target_link_libraries(audio-assistant PRIVATE
     Qt6::Qml
     Qt6::QuickControls2
     spdlog::spdlog
-    # Linked to prove the FetchContent integration builds and links end-to-end.
-    # No LLMQore header is included yet; usage code arrives with the feature task.
     LLMQore::LLMQore
+    # LLMQore is a static library that links Qt Network publicly and Qt
+    # Concurrent privately. Qt is not consumed through Conan on Linux (see
+    # conanfile.py), so the ConanDeps target cannot carry those link
+    # dependencies and they are attached to the consumer explicitly.
+    Qt6::Network
+    Qt6::Concurrent
 )
 
 # ── Tests ───────────────────────────────────────────────────

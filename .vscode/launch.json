@@ -1,0 +1,111 @@
+{
+  // Отладочные конфигурации. Отладчик — cppdbg (расширение C/C++) поверх
+  // gdb (Linux) / lldb (macOS), поэтому IntelliSense у C/C++ отключён —
+  // навигацию обеспечивает clangd.
+  //
+  // Бинарники берутся из конфигурации Debug (build/debug) — её собирает
+  // preLaunchTask «cmake: build (debug)». Для GUI-приложения платформа
+  // вывода НЕ переводится в offscreen, у тестов — переводится.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug: audio-assistant (Debug, GUI)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/debug/audio-assistant",
+      "windows": {
+        "program": "${workspaceFolder}/build/debug/audio-assistant.exe"
+      },
+      "osx": {
+        "program": "${workspaceFolder}/build/debug/audio-assistant.app/Contents/MacOS/audio-assistant",
+        "MIMode": "lldb"
+      },
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "setupCommands": [
+        {
+          "description": "Включить pretty-printing в gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ],
+      "preLaunchTask": "cmake: build (debug)"
+    },
+    {
+      "name": "Debug: Qt test (Debug, offscreen)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/debug/${input:testTarget}",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [
+        {
+          "name": "QT_QPA_PLATFORM",
+          "value": "offscreen"
+        }
+      ],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "osx": {
+        "MIMode": "lldb"
+      },
+      "setupCommands": [
+        {
+          "description": "Включить pretty-printing в gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ],
+      "preLaunchTask": "cmake: build (debug)"
+    },
+    {
+      "name": "Debug: selected CMake target (Debug)",
+      "detail": "Цель выбирается командой «CMake: Set Debug Target»",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${command:cmake.launchTargetDirectory}",
+      "environment": [
+        {
+          "name": "QT_QPA_PLATFORM",
+          "value": "offscreen"
+        }
+      ],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "osx": {
+        "MIMode": "lldb"
+      },
+      "setupCommands": [
+        {
+          "description": "Включить pretty-printing в gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ],
+      "preLaunchTask": "cmake: build (debug)"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "testTarget",
+      "type": "pickString",
+      "description": "Qt Test цель для отладки",
+      "options": [
+        "tst_main",
+        "tst_message",
+        "tst_answer",
+        "tst_chat",
+        "tst_logging"
+      ],
+      "default": "tst_main"
+    }
+  ]
+}

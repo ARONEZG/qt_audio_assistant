@@ -7,6 +7,17 @@
 
 ## [Unreleased]
 
+### Changed
+
+- LLMQore больше не подтягивается через `FetchContent` в `CMakeLists.txt`: библиотека
+  поставляется Conan-пакетом `llmqore/0.8.0` из in-repo рецепта `recipes/llmqore`
+  (пин на upstream-тег `v0.8.0`). Conan стал обязательным для сборки, а загрузка
+  исходников с `github.com` переехала с этапа конфигурации CMake на этап
+  `conan install`; зависимости линкуются через `find_package(LLMQore)`.
+- Профиль `profiles/clang18` теперь явно задаёт `tools.build:compiler_executables`
+  (`clang-18` / `clang++-18`), чтобы пакеты, которые собирает Conan (llmqore, spdlog),
+  действительно компилировались Clang, а не системным компилятором по умолчанию.
+
 ### Fixed
 
 - Окно приложения больше не зависает невидимым: добавлено свойство `visible: true` в `ApplicationWindow` (`qml/Main.qml`). Ранее окно создавалось, но не отображалось.
@@ -45,6 +56,13 @@
   индекс вне диапазона возвращают «ничего» вместо неопределённого поведения.
 - Тестовый двойник `FakeProvider` принимает `id`/`displayName`, чтобы тесты предлагали
   несколько различимых провайдеров.
+- Конфигурация VS Code (`.vscode/`) для локальной разработки: сборка и запуск по
+  `CMakePresets.json`, отладка `cppdbg` (gdb/lldb) приложения и Qt Test, `clang-format`
+  на сохранении через clangd, `clang-tidy` по `build/debug/compile_commands.json`,
+  а также задачи для `scripts/static-analysis.sh` и `scripts/ci-check.sh`. Инструкция —
+  `docs/VSCODE_SETUP.md`; каталог `.vscode/` больше не игнорируется (коммитится),
+  личные настройки — в `.vscode/settings.local.json`.
+- Раздел «Сборка через CMake-пресеты» и «Разработка из VS Code» в `README.md`.
 - Домен LLM-чата (первый C++-инкремент, `src/domain/`): неизменяемое значение
   `Message` (`MessageRole`), типизированная ошибка `ProviderError`, объект одного
   потокового ответа `Answer` (накопление текста, `complete`/`fail`/`cancel`,

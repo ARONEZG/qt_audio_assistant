@@ -19,3 +19,7 @@ compiler.cppstd=20
 tools.cmake.cmaketoolchain:generator=Ninja
 tools.system.package_manager:mode=install
 tools.system.package_manager:sudo=True
+# Force the Clang toolchain for every package Conan builds (llmqore, spdlog).
+# Without this the profile claims clang while CMake would fall back to the
+# system default (gcc), silently mixing compilers.
+tools.build:compiler_executables={"c": "clang-18", "cpp": "clang++-18"}

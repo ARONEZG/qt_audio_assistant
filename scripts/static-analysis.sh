@@ -12,8 +12,8 @@
 # дороги по времени.
 #
 # Анализу подлежит только собственный код репозитория (src/, tests/,
-# qml/). Сторонние библиотеки (LLMQore в _deps/), moc/qml-генерация и
-# Qt build helpers исключаются из анализа явно.
+# qml/). Сторонние библиотеки (Conan-пакеты spdlog/LLMQore), moc/qml-
+# генерация и Qt build helpers исключаются из анализа явно.
 #
 # Скорость:
 #   * clang-tidy/clazy распараллелены по числу CPU (ANALYSIS_JOBS);
@@ -223,8 +223,8 @@ third_party_excludes() {
 
 # ── Filtered compilation database ───────────────────────────
 # Produces a compile_commands.json limited to src/ + tests/. Analyzers that
-# consume the whole database (CodeChecker) would otherwise walk every LLMQore
-# and generated translation unit under _deps/ and .qt/.
+# consume the whole database (CodeChecker) would otherwise walk every
+# generated translation unit under _deps/ and .qt/.
 project_compile_commands() {
     local build_dir="$1"
     local db="$build_dir/compile_commands.json"
@@ -372,9 +372,14 @@ ensure_compile_commands() {
     mkdir -p "$build_dir"
 
     if ! command -v conan &>/dev/null; then
-        fail "conan not found in PATH (required for the spdlog dependency)"
+        fail "conan not found in PATH (required for the spdlog/llmqore dependencies)"
         return 1
     fi
+    info "Conan export recipes/llmqore"
+    conan export "$PROJECT_ROOT/recipes/llmqore" 2>&1 | tail -2 || {
+        fail "conan export (llmqore recipe) failed"
+        return 1
+    }
     info "Conan install (Debug)"
     conan install "$PROJECT_ROOT" -of "$conan_dir" --build=missing \
         -pr:b "$PROJECT_ROOT/profiles/clang18" -pr "$PROJECT_ROOT/profiles/clang18" \
@@ -527,6 +532,12 @@ step_scan_build() {
         warn "conan not found — skipping scan-build"
         return 0
     fi
+
+    info "Conan export recipes/llmqore"
+    conan export "$PROJECT_ROOT/recipes/llmqore" 2>&1 | tail -2 || {
+        warn "scan-build: conan export failed — skipping"
+        return 0
+    }
 
     info "Conan install (Debug)"
     conan install "$PROJECT_ROOT" -of "$conan_dir" --build=missing \
