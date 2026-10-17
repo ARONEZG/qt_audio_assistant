@@ -1,16 +1,23 @@
 #include "FakeProvider.h"
 
-FakeProvider::FakeProvider(QObject* parent) : Provider(parent) {
+#include <utility>
+
+FakeProvider::FakeProvider(QObject* parent)
+    : FakeProvider(QStringLiteral("fake"), QStringLiteral("Fake Provider"), parent) {
+}
+
+FakeProvider::FakeProvider(QString id, QString displayName, QObject* parent)
+    : Provider(parent), id_(std::move(id)), displayName_(std::move(displayName)) {
 }
 
 FakeProvider::~FakeProvider() = default;
 
 QString FakeProvider::id() const {
-    return QStringLiteral("fake");
+    return id_;
 }
 
 QString FakeProvider::displayName() const {
-    return QStringLiteral("Fake Provider");
+    return displayName_;
 }
 
 Answer* FakeProvider::respond(const std::vector<Message>& history) {
