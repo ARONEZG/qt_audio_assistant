@@ -1,12 +1,19 @@
 """Conan recipe for the Audio Assistant project.
 
-Qt 6.4.2 is the primary dependency target. The Conan requirement is currently
-disabled (see ``requires`` below): on Linux, Qt is taken from the system
-(apt/libqt6*-dev) because ConanCenter lacks pre-built binaries for
-Linux/Clang. Uncomment ``requires`` once pre-built binaries are available,
-or for Windows/macOS builds.
+Qt 6.8.3 is the primary dependency target, but Conan does not provide it here:
+the Conan requirement stays disabled (see ``requires`` below) because
+ConanCenter lacks pre-built Qt binaries for Linux/Clang. On Linux, Qt is
+instead installed per-user with aqtinstall into ``~/Qt/6.8.3/gcc_64`` and
+located by CMake via ``-DCMAKE_PREFIX_PATH``.
 
 Usage (from the project root, Linux with Clang 18 and Ninja):
+
+    # 0. One-time Qt install (no sudo, per-user, pinned version).
+    #    In Qt 6 Qt Quick Controls 2 is part of the qtdeclarative archive,
+    #    so there is no separate qtquickcontrols2 module/archive:
+    pipx install aqtinstall
+    aqt install-qt linux desktop 6.8.3 linux_gcc_64 -O ~/Qt \
+        --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
 
     # 1. Install build dependencies using the in-repo profile
     #    (profiles/clang18; currently only build-time tooling, no packages)
@@ -18,14 +25,16 @@ Usage (from the project root, Linux with Clang 18 and Ninja):
     CC=clang-18 CXX=clang++-18 cmake -S . -B build \
         -DCONAN_BUILD_DIR=build/conan \
         -DCMAKE_BUILD_TYPE=Debug \
+        -DCMAKE_PREFIX_PATH=$HOME/Qt/6.8.3/gcc_64 \
         -G Ninja
 
     # 3. Build and test
     cmake --build build
     ctest --test-dir build --output-on-failure
 
-    # Without Conan (system Qt):
-    CC=clang-18 CXX=clang++-18 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -G Ninja
+    # Without Conan (aqtinstall Qt):
+    CC=clang-18 CXX=clang++-18 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
+        -DCMAKE_PREFIX_PATH=$HOME/Qt/6.8.3/gcc_64 -G Ninja
     cmake --build build
 """
 
@@ -48,13 +57,15 @@ class AudioAssistantConan(ConanFile):
     settings = "os", "arch", "compiler", "build_type"
 
     # ── Qt dependency ───────────────────────────────────────────────
-    # On Linux Qt is provided by the system (apt/libqt6*-dev packages).
+    # On Linux Qt 6.8.3 is installed per-user with aqtinstall into
+    # ~/Qt/6.8.3/gcc_64 (see the module docstring) and located by CMake
+    # through -DCMAKE_PREFIX_PATH; the system packages are no longer used.
     # Uncomment the line below once pre-built binaries for your platform
     # are available in ConanCenter, or on Windows/macOS:
     #
-    #   requires = "qt/6.4.2"
+    #   requires = "qt/6.8.3"
     #
-    # Qt 6.4.2 options for reference:
+    # Qt 6.8.3 options for reference:
     # default_options = {
     #     "qt/*:shared": False,
     #     "qt/*:opengl": "desktop",

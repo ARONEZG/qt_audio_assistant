@@ -31,6 +31,9 @@
   зависимостями. Зависимость Qt через ConanCenter пока отключена (`requires = ()`); на Linux
   Qt берётся из системы.
 - Опциональная поддержка Conan в `CMakeLists.txt` через переменную `CONAN_BUILD_DIR`.
+- Зависимость **LLMQore v0.8.0** (MIT) подключается через CMake `FetchContent` с
+  зафиксированным тегом и линкуется в исполняемый файл `audio-assistant`. API библиотеки
+  пока не используется.
 
 ### Changed
 
@@ -44,3 +47,10 @@
 - Обновлён `docs/STATIC_ANALYSIS_TOOLS.md`: состояние инструментов в окружении.
 - Правила Git workflow: авто-push + auto-PR для значимых изменений, CI/CD gate для
   мержа, изоляция изменений (`AGENTS.md` §6, `docs/BRANCHING.md`).
+- Минимальная версия Qt повышена с 6.4.2 до **6.8.3**. Qt ставится per-user через
+  `aqtinstall` в `~/Qt/6.8.3/gcc_64` и находится через `CMAKE_PREFIX_PATH`; system-пакеты
+  дистрибутива (`qt6-base-dev`, `qt6-declarative-dev`) больше не используются.
+- CI: все стадии устанавливают Qt 6.8.3 через `aqtinstall` и передают `CMAKE_PREFIX_PATH`;
+  состав стадий не изменился.
+- `README.md` и `conanfile.py`: инструкции по установке и сборке приведены к новому
+  способу получения Qt.
