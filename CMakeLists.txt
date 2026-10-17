@@ -251,6 +251,40 @@ target_compile_options(audio-assistant-qt-warnings INTERFACE
 # linked PRIVATE into the executable.
 find_package(LLMQore REQUIRED)
 
+# ── miniaudio (audio capture) ───────────────────────────────
+# miniaudio is a managed Conan dependency (miniaudio/0.11.25 in conanfile.py) —
+# the single source of truth for its version. It is a third-party, header-only
+# C library (miniaudio.h) that provides microphone capture on Windows/Linux/
+# macOS and native loopback capture of the system output on Windows; on Linux
+# the system output is captured through a PulseAudio/PipeWire-Pulse monitor
+# source. macOS loopback is a documented gap (docs/ADR-audio-capture.md).
+find_package(miniaudio REQUIRED)
+
+# miniaudio.h is third-party code. CMakeDeps exports its include directory via
+# INTERFACE_INCLUDE_DIRECTORIES (a plain -I); repeating the same paths in
+# INTERFACE_SYSTEM_INCLUDE_DIRECTORIES makes CMake emit them as -isystem so the
+# project's -Weverything -Werror profile does not flag the vendored header.
+set_target_properties(miniaudio::miniaudio PROPERTIES
+    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${miniaudio_INCLUDE_DIRS}"
+)
+
+# ── Audio library ───────────────────────────────────────────
+# Thin wrapper that owns the miniaudio implementation translation unit, so the
+# third-party amalgamation is compiled once and the future platform-specific
+# capture code has a single home behind a narrow interface. It contains no
+# capture logic yet — only the implementation compile unit.
+add_library(audio-assistant-audio STATIC
+    src/audio/MiniaudioImplementation.cpp
+)
+
+set_target_properties(audio-assistant-audio PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(audio-assistant-audio
+    PRIVATE audio-assistant-strict miniaudio::miniaudio
+)
+
 # ── Domain library ──────────────────────────────────────────
 # Framework-agnostic chat domain (immutable values, provider role interface,
 # orchestration). Built as a static library so the executable and every test
@@ -310,6 +344,7 @@ set_target_properties(audio-assistant PROPERTIES
 target_link_libraries(audio-assistant PRIVATE
     audio-assistant-strict
     audio-assistant-domain
+    audio-assistant-audio
     audio-assistant-qml
     Qt6::Core
     Qt6::Gui
