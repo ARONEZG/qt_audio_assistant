@@ -22,3 +22,11 @@
   зависимостями. Зависимость Qt через ConanCenter пока отключена (`requires = ()`); на Linux
   Qt берётся из системы.
 - Опциональная поддержка Conan в `CMakeLists.txt` через переменную `CONAN_BUILD_DIR`.
+
+### Changed
+
+- `AGENTS.md` реструктурирован: общие правила (~80 строк) в корне, специфичные
+  для подсистем — во вложенных `src/AGENTS.md`, `qml/AGENTS.md`, `tests/AGENTS.md`
+  (загружаются OpenCode V2 только при работе в соответствующей директории).
+- Правила ветвления, changelog и code reuse вынесены в `docs/BRANCHING.md`,
+  `docs/CHANGELOG_GUIDE.md`, `docs/CODE_REUSE_POLICY.md`.
