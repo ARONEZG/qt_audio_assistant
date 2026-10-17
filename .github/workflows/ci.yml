@@ -46,6 +46,7 @@ jobs:
             qml6-module-qtquick-templates \
             qml6-module-qtquick-window \
             qml6-module-qtquick-nativestyle \
+            qml6-module-qtqml \
             qml6-module-qtqml-models \
             qml6-module-qtqml-workerscript
 
@@ -201,6 +202,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: debug-build
+          path: build-debug
 
       - name: Install analysis tools
         run: |
@@ -336,7 +338,7 @@ jobs:
         run: |
           cmake --build build-cov -j$(nproc)
           cd build-cov
-          LLVM_PROFILE_FILE="build-cov/code-%p.profraw" \
+          LLVM_PROFILE_FILE="code-%p.profraw" \
             ctest --output-on-failure -j$(nproc)
 
       - name: Generate coverage report
