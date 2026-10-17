@@ -89,8 +89,9 @@ if(DEFINED CONAN_BUILD_DIR)
     _audio_assistant_find_conan_toolchain("${_conan_dir}" _conan_toolchain)
 
     if(NOT _conan_toolchain)
-        # The managed dependencies (spdlog) are not installed for this build
-        # type yet. Install them automatically so one-click IDE builds work.
+        # The managed dependencies (spdlog, miniaudio, llmqore) are not installed
+        # for this build type yet. Install them automatically so one-click IDE
+        # builds work.
         find_program(_conan_exe conan)
         if(NOT _conan_exe)
             message(FATAL_ERROR
