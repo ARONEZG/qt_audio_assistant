@@ -6,6 +6,11 @@ ConanCenter lacks pre-built Qt binaries for Linux/Clang. On Linux, Qt is
 instead installed per-user with aqtinstall into ``~/Qt/6.8.3/gcc_64`` and
 located by CMake via ``-DCMAKE_PREFIX_PATH``.
 
+spdlog is the managed runtime dependency (logging) and Conan is the single
+source of truth for its version (1.14.1). Local builds, ``scripts/ci-check.sh``
+and CI all run ``conan install`` and configure CMake with ``-DCONAN_BUILD_DIR``;
+no system ``libspdlog-dev`` is used.
+
 Usage (from the project root, Linux with Clang 18 and Ninja):
 
     # 0. One-time Qt install (no sudo, per-user, pinned version).
@@ -16,8 +21,10 @@ Usage (from the project root, Linux with Clang 18 and Ninja):
         --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
 
     # 1. Install build dependencies using the in-repo profile
-    #    (profiles/clang18; currently only build-time tooling, no packages)
-    conan install . -of build/conan --build=missing -pr profiles/clang18
+    #    (profiles/clang18; spdlog is fetched from ConanCenter). The profile is
+    #    passed for both contexts so no machine-global default profile is needed:
+    conan install . -of build/conan --build=missing \
+        -pr:b profiles/clang18 -pr profiles/clang18
 
     # 2. Configure CMake with the Conan-generated toolchain.
     #    The toolchain is included after project(), so the compiler must be
@@ -32,7 +39,8 @@ Usage (from the project root, Linux with Clang 18 and Ninja):
     cmake --build build
     ctest --test-dir build --output-on-failure
 
-    # Without Conan (aqtinstall Qt):
+    # Without Conan: needs a system spdlog >= 1.14
+    # (CMakeLists.txt pins find_package(spdlog 1.14 REQUIRED)).
     CC=clang-18 CXX=clang++-18 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
         -DCMAKE_PREFIX_PATH=$HOME/Qt/6.8.3/gcc_64 -G Ninja
     cmake --build build
@@ -81,9 +89,11 @@ class AudioAssistantConan(ConanFile):
     #     "qt/*:with_doubleconversion": True,
     #     "qt/*:with_dbus": True,
     # }
-    # Currently no managed runtime dependencies; Conan only generates the
-    # CMake toolchain/build files (build-time tooling).
-    requires = ()
+    # Managed runtime dependency: spdlog (logging) — the single source of truth
+    # for its version, used by local builds, scripts/ci-check.sh and CI. Qt is
+    # installed with aqtinstall on Linux (see note above); add "qt/6.8.3" here
+    # for Windows/macOS builds.
+    requires = "spdlog/1.14.1"
 
     def layout(self):
         cmake_layout(self)

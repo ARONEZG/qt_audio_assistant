@@ -110,6 +110,13 @@ find_package(Qt6 REQUIRED COMPONENTS
     Test
 )
 
+# ── spdlog logging ───────────────────────────────────────────
+# spdlog is a managed Conan dependency (spdlog/1.14.1 in conanfile.py); the exact
+# version comes from the Conan toolchain loaded above. The minimum is pinned here
+# so that configuring against an older system spdlog fails immediately instead of
+# silently building with a different version.
+find_package(spdlog 1.14 REQUIRED)
+
 # ── Strict warning profile (shared by all project-owned targets) ──
 # The zero-warning profile from src/AGENTS.md lives in one INTERFACE target so it
 # is defined once and applied per target instead of being copy-pasted.
@@ -207,6 +214,7 @@ qt_add_qml_module(audio-assistant-qml
 # ── Main executable ─────────────────────────────────────────
 add_executable(audio-assistant
     src/main.cpp
+    src/logging/LogBridge.cpp
 )
 
 set_target_properties(audio-assistant PROPERTIES
@@ -221,6 +229,7 @@ target_link_libraries(audio-assistant PRIVATE
     Qt6::Gui
     Qt6::Qml
     Qt6::QuickControls2
+    spdlog::spdlog
     # Linked to prove the FetchContent integration builds and links end-to-end.
     # No LLMQore header is included yet; usage code arrives with the feature task.
     LLMQore::LLMQore
@@ -282,5 +291,45 @@ target_link_libraries(tst_main PRIVATE
 
 add_test(NAME tst_main COMMAND tst_main)
 set_tests_properties(tst_main PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── Logging tests ───────────────────────────────────────────
+qt_add_executable(tst_logging
+    tests/tst_logging.cpp
+    src/logging/LogBridge.cpp
+)
+
+set_target_properties(tst_logging PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_compile_options(tst_logging PRIVATE
+    -std=c++20
+    -Wall -Wextra -Wpedantic -Werror
+    -Weverything
+    -Wno-c++98-compat
+    -Wno-c++98-compat-pedantic
+    -Wno-c++20-compat
+    -Wno-unknown-warning-option
+    -Wno-padded  # moc-generated meta code may have padding on structs
+    -Wconversion -Wsign-conversion -Wimplicit-fallthrough
+    -Wcast-align -Wcast-qual -Wdouble-promotion -Wformat=2
+    -Wnull-dereference -Woverloaded-virtual -Wshadow-all
+    -Wswitch-enum -Wundef -Wunreachable-code -Wunused
+)
+
+target_include_directories(tst_logging PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(tst_logging PRIVATE
+    Qt6::Core
+    Qt6::Test
+    spdlog::spdlog
+)
+
+add_test(NAME tst_logging COMMAND tst_logging)
+set_tests_properties(tst_logging PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )

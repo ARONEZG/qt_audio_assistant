@@ -29,6 +29,18 @@
 - Статическая библиотека `audio-assistant-domain` и модульные тесты
   `tst_message`, `tst_answer`, `tst_chat` с тестовым двойником `FakeProvider`
   (Qt Test + CTest, `QT_QPA_PLATFORM=offscreen`, детерминированно, без сети).
+- Логирование через spdlog: мост Qt → spdlog `LogBridge` (`src/logging/LogBridge.hpp`,
+  `src/logging/LogBridge.cpp`). При создании устанавливается цветной консольный логгер
+  и Qt-обработчик сообщений (`qInstallMessageHandler`), при разрушении — предыдущие
+  обработчик и логгер восстанавливаются. `qDebug/qInfo/qWarning/qCritical` маппятся на
+  уровни spdlog, `qFatal` логируется и завершает процесс. Подключено в `src/main.cpp`.
+- Зависимость `spdlog/1.14.1` в `conanfile.py`; поиск и линковка `spdlog::spdlog`
+  (`CMakeLists.txt`, `find_package(spdlog 1.14 REQUIRED)`). Conan — единственный источник
+  версии: CI, `scripts/ci-check.sh` и `scripts/static-analysis.sh` выполняют `conan install`
+  и передают `-DCONAN_BUILD_DIR`; системный `libspdlog-dev` не используется.
+- Тесты моста логирования (`tests/tst_logging.cpp`): маршрутизация сообщений,
+  фильтрация по уровню, восстановление Qt-обработчика и логгера spdlog, а также
+  завершение процесса по `qFatal` (проверяется в дочернем процессе).
 - Короткий блок критических правил для AI-агента (`docs/AGENTS_CRITICAL.md`),
   подключаемый через `opencode.json` (`instructions`), чтобы правила изоляции и
   доставки (ветка → push → PR) не терялись в длинных сессиях.

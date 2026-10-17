@@ -9,6 +9,11 @@ name: CI — Quality Gates
 # with aqtinstall into $HOME/Qt and points CMake at it explicitly; this mirrors
 # the local developer setup (see conanfile.py).
 #
+# spdlog is provided by Conan (spdlog/1.14.1 in conanfile.py) — the single
+# source of truth for its version. Every job that builds installs Conan, runs
+# `conan install` and points CMake at the generated toolchain via
+# -DCONAN_BUILD_DIR; no system libspdlog-dev is used.
+#
 # Runs on push to main, PR to main, and manually.
 # Free for public repos; 2000 min/month for private repos.
 
@@ -125,6 +130,18 @@ jobs:
             --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
           echo "CMAKE_PREFIX_PATH=$HOME/Qt/$QT_VERSION/gcc_64" >> "$GITHUB_ENV"
 
+      - name: Install Conan
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install conan
+          else
+            python3 -m pip install --user --break-system-packages conan
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Conan install (spdlog)
+        run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
+
       - name: Setup ccache
         uses: actions/cache@v4
         with:
@@ -141,6 +158,7 @@ jobs:
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -DCONAN_BUILD_DIR=build/conan \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
@@ -151,13 +169,6 @@ jobs:
         run: |
           cd build-debug
           ctest --output-on-failure -j$(nproc)
-
-      - name: Upload build directory (for static analysis)
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-build
-          path: build-debug/
-          if-no-files-found: warn
 
   # ──────────────────────────────────────────────────────────────
   # 3. Release build + tests
@@ -189,13 +200,29 @@ jobs:
             --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
           echo "CMAKE_PREFIX_PATH=$HOME/Qt/$QT_VERSION/gcc_64" >> "$GITHUB_ENV"
 
+      - name: Install Conan
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install conan
+          else
+            python3 -m pip install --user --break-system-packages conan
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Conan install (spdlog)
+        run: |
+          conan install . -of build/conan --build=missing \
+            -pr:b profiles/clang18 -pr profiles/clang18 \
+            -s:b build_type=Release -s build_type=Release
+
       - name: Configure (Release)
         run: |
           CC=clang-18 CXX=clang++-18 \
             cmake -S . -B build-release \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -DCONAN_BUILD_DIR=build/conan
 
       - name: Build (Release)
         run: cmake --build build-release -j$(nproc)
@@ -210,29 +237,21 @@ jobs:
   # ──────────────────────────────────────────────────────────────
   static-analysis:
     name: "Static Analysis"
-    needs: build-and-test-debug
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download compile_commands.json
-        uses: actions/download-artifact@v4
-        with:
-          name: debug-build
-          path: build-debug
-
-      - name: Install analysis tools
+      - name: Install dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
+            clang-18 \
+            ninja-build \
             clang-tidy-18 \
-            clazy
+            clazy \
+            libgl1-mesa-dev
 
-      # clang-tidy parses compile_commands.json from the debug-build artifact,
-      # whose Qt include paths point at $HOME/Qt/6.8.3/gcc_64 — install the same
-      # Qt here so those headers resolve (LLMQore headers live inside the
-      # artifact under build-debug/_deps, Qt headers do not).
       - name: Install Qt ${{ env.QT_VERSION }} (aqtinstall)
         run: |
           if command -v pipx >/dev/null 2>&1; then
@@ -243,6 +262,35 @@ jobs:
           aqt install-qt linux desktop "$QT_VERSION" "$QT_ARCH" \
             -O "$HOME/Qt" \
             --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
+          echo "CMAKE_PREFIX_PATH=$HOME/Qt/$QT_VERSION/gcc_64" >> "$GITHUB_ENV"
+
+      - name: Install Conan
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install conan
+          else
+            python3 -m pip install --user --break-system-packages conan
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Conan install (spdlog)
+        run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
+
+      # Configure and build Debug here: compile_commands.json and the AUTOMOC
+      # .moc files embed job-local absolute paths (Qt under $HOME, and Conan
+      # package folders whose names are not reproducible across caches), so a
+      # build directory produced by the Debug job cannot be reused here.
+      - name: Configure (Debug)
+        run: |
+          CC=clang-18 CXX=clang++-18 \
+            cmake -S . -B build-debug \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -DCONAN_BUILD_DIR=build/conan
+
+      - name: Build (Debug)
+        run: cmake --build build-debug -j$(nproc)
 
       - name: clang-tidy
         run: |
@@ -314,6 +362,18 @@ jobs:
             --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
           echo "CMAKE_PREFIX_PATH=$HOME/Qt/$QT_VERSION/gcc_64" >> "$GITHUB_ENV"
 
+      - name: Install Conan
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install conan
+          else
+            python3 -m pip install --user --break-system-packages conan
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Conan install (spdlog)
+        run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
+
       - name: Configure (ASan + UBSan)
         run: |
           CC=clang-18 CXX=clang++-18 \
@@ -321,6 +381,7 @@ jobs:
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -DCONAN_BUILD_DIR=build/conan \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
             -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
@@ -367,6 +428,18 @@ jobs:
             --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
           echo "CMAKE_PREFIX_PATH=$HOME/Qt/$QT_VERSION/gcc_64" >> "$GITHUB_ENV"
 
+      - name: Install Conan
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install conan
+          else
+            python3 -m pip install --user --break-system-packages conan
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Conan install (spdlog)
+        run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
+
       - name: Configure (coverage)
         run: |
           CC=clang-18 CXX=clang++-18 \
@@ -374,6 +447,7 @@ jobs:
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -DCONAN_BUILD_DIR=build/conan \
             -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
             -DCMAKE_C_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
             -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
