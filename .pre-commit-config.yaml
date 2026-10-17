@@ -2,7 +2,12 @@
 # Pre-commit hooks — быстрые проверки перед каждым коммитом.
 #
 # Установка (один раз):
-#   pre-commit install
+#   scripts/setup-git-hooks.sh
+#
+# ВНИМАНИЕ: `pre-commit install` в этом репозитории НЕ использовать —
+# при установленном core.hooksPath он падает с отказом перезаписи
+# .githooks/pre-commit (ожидаемая громкая ошибка). Quality-проверки
+# делегируются из .githooks/pre-commit.
 #
 # Запуск вручную на всех файлах:
 #   pre-commit run --all-files
