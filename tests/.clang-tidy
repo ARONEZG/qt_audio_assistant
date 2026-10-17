@@ -1,0 +1,9 @@
+---
+# Qt Test assertion macros (QCOMPARE/QVERIFY/...) expand to several statements
+# each, so an ordinary test function blows past the shared readability-function-
+# size thresholds even when it is only a handful of source lines. Inherit every
+# other check from the repository config and relax only the size heuristic here.
+InheritParentConfig: true
+CheckOptions:
+  readability-function-size.LineThreshold: 200
+  readability-function-size.StatementThreshold: 200

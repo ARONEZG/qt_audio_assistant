@@ -13,6 +13,15 @@
 
 ### Added
 
+- Домен LLM-чата (первый C++-инкремент, `src/domain/`): неизменяемое значение
+  `Message` (`MessageRole`), типизированная ошибка `ProviderError`, объект одного
+  потокового ответа `Answer` (накопление текста, `complete`/`fail`/`cancel`,
+  сигналы `chunkReceived`/`completed`/`failed`), role-интерфейс `Provider`
+  (`id`/`displayName`/`respond`) и `Chat` (провайдер через DI, append-only история
+  сообщений, «живой» ответ в `streamingText`, команды `send`/`cancel`).
+- Статическая библиотека `audio-assistant-domain` и модульные тесты
+  `tst_message`, `tst_answer`, `tst_chat` с тестовым двойником `FakeProvider`
+  (Qt Test + CTest, `QT_QPA_PLATFORM=offscreen`, детерминированно, без сети).
 - Короткий блок критических правил для AI-агента (`docs/AGENTS_CRITICAL.md`),
   подключаемый через `opencode.json` (`instructions`), чтобы правила изоляции и
   доставки (ветка → push → PR) не терялись в длинных сессиях.
@@ -43,6 +52,12 @@
 
 ### Changed
 
+- Профиль строгих предупреждений Clang вынесен в общую INTERFACE-цель
+  `audio-assistant-strict`; `CMakeLists.txt` собирает домен отдельной целью
+  `audio-assistant-domain` и линкует её в приложение и тесты (target-based).
+- `tests/.clang-tidy` наследует корневой конфиг и смягчает только порог
+  `readability-function-size`: макросы Qt Test (`QCOMPARE`/`QVERIFY`) раздувают
+  счётчик statements, из-за чего обычные тестовые функции ложно не проходили.
 - `AGENTS.md` реструктурирован: общие правила (~80 строк) в корне, специфичные
   для подсистем — во вложенных `src/AGENTS.md`, `qml/AGENTS.md`, `tests/AGENTS.md`
   (загружаются OpenCode V2 только при работе в соответствующей директории).
