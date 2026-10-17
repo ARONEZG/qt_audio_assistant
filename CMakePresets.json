@@ -1,0 +1,60 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 26,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "audio-assistant-debug",
+            "displayName": "Audio Assistant (Debug, Conan, Clang)",
+            "description": "Debug build with Conan-managed spdlog. Requires Conan in PATH; runs 'conan install' automatically on first configure.",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CONAN_BUILD_DIR": "${sourceDir}/build/conan",
+                "CMAKE_CXX_COMPILER": "clang++-18"
+            }
+        },
+        {
+            "name": "audio-assistant-release",
+            "displayName": "Audio Assistant (Release, Conan, Clang)",
+            "description": "Release build with Conan-managed spdlog. Requires Conan in PATH; runs 'conan install' automatically on first configure.",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CONAN_BUILD_DIR": "${sourceDir}/build/conan",
+                "CMAKE_CXX_COMPILER": "clang++-18"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "audio-assistant-debug",
+            "configurePreset": "audio-assistant-debug"
+        },
+        {
+            "name": "audio-assistant-release",
+            "configurePreset": "audio-assistant-release"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "audio-assistant-debug",
+            "configurePreset": "audio-assistant-debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "audio-assistant-release",
+            "configurePreset": "audio-assistant-release",
+            "output": {
+                "outputOnFailure": true
+            }
+        }
+    ]
+}

@@ -103,4 +103,10 @@ class AudioAssistantConan(ConanFile):
         deps.generate()
 
         tc = CMakeToolchain(self)
+        # Do not generate/update CMakeUserPresets.json: the repository ships a
+        # committed CMakePresets.json (audio-assistant-debug/-release) that
+        # passes CONAN_BUILD_DIR and picks the Clang toolchain, so a stale
+        # Conan-generated preset pointing at a wiped build/ dir would break
+        # `cmake --preset …` from VS Code on a fresh clone.
+        tc.user_presets_path = False
         tc.generate()
