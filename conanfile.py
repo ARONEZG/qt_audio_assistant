@@ -6,10 +6,18 @@ ConanCenter lacks pre-built Qt binaries for Linux/Clang. On Linux, Qt is
 instead installed per-user with aqtinstall into ``~/Qt/6.8.3/gcc_64`` and
 located by CMake via ``-DCMAKE_PREFIX_PATH``.
 
-spdlog is the managed runtime dependency (logging) and Conan is the single
-source of truth for its version (1.14.1). Local builds, ``scripts/ci-check.sh``
-and CI all run ``conan install`` and configure CMake with ``-DCONAN_BUILD_DIR``;
-no system ``libspdlog-dev`` is used.
+spdlog (logging) and LLMQore (LLM client) are the managed dependencies and
+Conan is the single source of truth for their versions (spdlog/1.14.1,
+llmqore/0.8.0). Local builds, ``scripts/ci-check.sh`` and CI all run
+``conan install`` and configure CMake with ``-DCONAN_BUILD_DIR``; no system
+``libspdlog-dev`` is used.
+
+spdlog comes from ConanCenter. LLMQore is not published on ConanCenter, so it
+is provided by the in-repo recipe ``recipes/llmqore`` (pinned to the upstream
+git tag v0.8.0), which must be exported before it can be built:
+
+    conan export recipes/llmqore
+    conan install . -of build/conan --build=missing ...
 
 Usage (from the project root, Linux with Clang 18 and Ninja):
 
@@ -20,9 +28,11 @@ Usage (from the project root, Linux with Clang 18 and Ninja):
     aqt install-qt linux desktop 6.8.3 linux_gcc_64 -O ~/Qt \
         --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
 
-    # 1. Install build dependencies using the in-repo profile
-    #    (profiles/clang18; spdlog is fetched from ConanCenter). The profile is
-    #    passed for both contexts so no machine-global default profile is needed:
+    # 1. Export the in-repo LLMQore recipe, then install build dependencies
+    #    using the in-repo profile (profiles/clang18; spdlog comes from
+    #    ConanCenter, llmqore is built from the recipe). The profile is passed
+    #    for both contexts so no machine-global default profile is needed:
+    conan export recipes/llmqore
     conan install . -of build/conan --build=missing \
         -pr:b profiles/clang18 -pr profiles/clang18
 
@@ -39,11 +49,9 @@ Usage (from the project root, Linux with Clang 18 and Ninja):
     cmake --build build
     ctest --test-dir build --output-on-failure
 
-    # Without Conan: needs a system spdlog >= 1.14
-    # (CMakeLists.txt pins find_package(spdlog 1.14 REQUIRED)).
-    CC=clang-18 CXX=clang++-18 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
-        -DCMAKE_PREFIX_PATH=$HOME/Qt/6.8.3/gcc_64 -G Ninja
-    cmake --build build
+    # Conan is mandatory: spdlog and LLMQore are resolved through the
+    # Conan-generated toolchain (find_package(spdlog 1.14 REQUIRED) and
+    # find_package(LLMQore REQUIRED) in CMakeLists.txt).
 """
 
 from conan import ConanFile
@@ -89,11 +97,15 @@ class AudioAssistantConan(ConanFile):
     #     "qt/*:with_doubleconversion": True,
     #     "qt/*:with_dbus": True,
     # }
-    # Managed runtime dependency: spdlog (logging) — the single source of truth
-    # for its version, used by local builds, scripts/ci-check.sh and CI. Qt is
-    # installed with aqtinstall on Linux (see note above); add "qt/6.8.3" here
-    # for Windows/macOS builds.
-    requires = "spdlog/1.14.1"
+    # Managed dependencies — the single source of truth for their versions,
+    # used by local builds, scripts/ci-check.sh and CI. Qt is installed with
+    # aqtinstall on Linux (see note above); add "qt/6.8.3" here for
+    # Windows/macOS builds.
+    #
+    # * spdlog — logging, fetched from ConanCenter.
+    # * llmqore — LLM client, provided by the in-repo recipe recipes/llmqore
+    #   (exported before `conan install`); see the module docstring.
+    requires = "spdlog/1.14.1", "llmqore/0.8.0"
 
     def layout(self):
         cmake_layout(self)

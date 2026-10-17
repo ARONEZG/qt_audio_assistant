@@ -9,10 +9,11 @@ name: CI — Quality Gates
 # with aqtinstall into $HOME/Qt and points CMake at it explicitly; this mirrors
 # the local developer setup (see conanfile.py).
 #
-# spdlog is provided by Conan (spdlog/1.14.1 in conanfile.py) — the single
-# source of truth for its version. Every job that builds installs Conan, runs
-# `conan install` and points CMake at the generated toolchain via
-# -DCONAN_BUILD_DIR; no system libspdlog-dev is used.
+# spdlog and LLMQore are provided by Conan (spdlog/1.14.1 from ConanCenter and
+# llmqore/0.8.0 from the in-repo recipe recipes/llmqore in conanfile.py) — the
+# single source of truth for their versions. Every job that builds installs
+# Conan, exports the LLMQore recipe, runs `conan install` and points CMake at
+# the generated toolchain via -DCONAN_BUILD_DIR; no system libspdlog-dev is used.
 #
 # Runs on push to main, PR to main, and manually.
 # Free for public repos; 2000 min/month for private repos.
@@ -139,8 +140,10 @@ jobs:
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Conan install (spdlog)
-        run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
+      - name: Conan install (spdlog, llmqore)
+        run: |
+          conan export recipes/llmqore
+          conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
       - name: Setup ccache
         uses: actions/cache@v4
@@ -209,8 +212,9 @@ jobs:
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Conan install (spdlog)
+      - name: Conan install (spdlog, llmqore)
         run: |
+          conan export recipes/llmqore
           conan install . -of build/conan --build=missing \
             -pr:b profiles/clang18 -pr profiles/clang18 \
             -s:b build_type=Release -s build_type=Release
@@ -273,8 +277,10 @@ jobs:
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Conan install (spdlog)
-        run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
+      - name: Conan install (spdlog, llmqore)
+        run: |
+          conan export recipes/llmqore
+          conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
       # Configure and build Debug here: compile_commands.json and the AUTOMOC
       # .moc files embed job-local absolute paths (Qt under $HOME, and Conan
@@ -371,8 +377,10 @@ jobs:
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Conan install (spdlog)
-        run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
+      - name: Conan install (spdlog, llmqore)
+        run: |
+          conan export recipes/llmqore
+          conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
       - name: Configure (ASan + UBSan)
         run: |
@@ -437,8 +445,10 @@ jobs:
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Conan install (spdlog)
-        run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
+      - name: Conan install (spdlog, llmqore)
+        run: |
+          conan export recipes/llmqore
+          conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
       - name: Configure (coverage)
         run: |

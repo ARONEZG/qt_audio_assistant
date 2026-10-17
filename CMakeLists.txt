@@ -106,6 +106,23 @@ if(DEFINED CONAN_BUILD_DIR)
             set(_conan_build_type "Debug")
         endif()
 
+        # The in-repo LLMQore recipe must be in the Conan cache before the
+        # package can be resolved/built; --build=missing below then produces it.
+        message(STATUS "Conan export recipes/llmqore (automatic)")
+        execute_process(
+            COMMAND "${_conan_exe}" export "${CMAKE_CURRENT_SOURCE_DIR}/recipes/llmqore"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            RESULT_VARIABLE _conan_export_result
+            OUTPUT_VARIABLE _conan_export_out
+            ERROR_VARIABLE _conan_export_err
+        )
+        if(NOT _conan_export_result EQUAL 0)
+            message(FATAL_ERROR
+                "Automatic 'conan export recipes/llmqore' failed.\n"
+                "${_conan_export_out}\n${_conan_export_err}"
+            )
+        endif()
+
         message(STATUS "Conan install (automatic, build_type=${_conan_build_type})")
         execute_process(
             COMMAND "${_conan_exe}" install .
@@ -169,9 +186,12 @@ endif()
 # aqtinstall (see conanfile.py), not by the system packages; point CMake at it
 # with -DCMAKE_PREFIX_PATH=$HOME/Qt/6.8.3/gcc_64 (the path is deliberately not
 # hardcoded here).
+# Network and Concurrent are required by LLMQore (Qt Networking / CONCURRENT).
 find_package(Qt6 6.8.3 REQUIRED COMPONENTS
     Core
     Gui
+    Network
+    Concurrent
     Qml
     Quick
     QuickControls2
@@ -224,20 +244,12 @@ target_compile_options(audio-assistant-qt-warnings INTERFACE
 )
 
 # ── LLMQore (LLM client library) ────────────────────────────
-# Pinned to the released tag v0.8.0 (MIT). Fetched as a SYSTEM subproject so
-# its headers are consumed as system headers and its own warning settings do
-# not leak into project targets. Only build-time auxiliary targets are forced
-# off; the library itself is linked PRIVATE into the executable.
-include(FetchContent)
-set(LLMQORE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(LLMQORE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(LLMQORE_BUILD_MCP_BRIDGE OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(LLMQore
-    SYSTEM
-    GIT_REPOSITORY https://github.com/Palm1r/llmqore.git
-    GIT_TAG v0.8.0
-)
-FetchContent_MakeAvailable(LLMQore)
+# LLMQore is a managed Conan dependency (llmqore/0.8.0, recipe in
+# recipes/llmqore) — the single source of truth for its version. Conan fetches,
+# builds and packages it; the CMakeDeps-generated config exposes the upstream
+# LLMQore::LLMQore target in the Conan generators directory. The library is
+# linked PRIVATE into the executable.
+find_package(LLMQore REQUIRED)
 
 # ── Domain library ──────────────────────────────────────────
 # Framework-agnostic chat domain (immutable values, provider role interface,
@@ -301,9 +313,13 @@ target_link_libraries(audio-assistant PRIVATE
     Qt6::Qml
     Qt6::QuickControls2
     spdlog::spdlog
-    # Linked to prove the FetchContent integration builds and links end-to-end.
-    # No LLMQore header is included yet; usage code arrives with the feature task.
     LLMQore::LLMQore
+    # LLMQore is a static library that links Qt Network publicly and Qt
+    # Concurrent privately. Qt is not consumed through Conan on Linux (see
+    # conanfile.py), so the ConanDeps target cannot carry those link
+    # dependencies and they are attached to the consumer explicitly.
+    Qt6::Network
+    Qt6::Concurrent
 )
 
 # ── Tests ───────────────────────────────────────────────────
