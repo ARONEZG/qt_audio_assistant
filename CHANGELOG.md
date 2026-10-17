@@ -31,6 +31,13 @@
 
 ### Added
 
+- Конфигурация VS Code (`.vscode/`) для локальной разработки: сборка и запуск по
+  `CMakePresets.json`, отладка `cppdbg` (gdb/lldb) приложения и Qt Test, `clang-format`
+  на сохранении через clangd, `clang-tidy` по `build/debug/compile_commands.json`,
+  а также задачи для `scripts/static-analysis.sh` и `scripts/ci-check.sh`. Инструкция —
+  `docs/VSCODE_SETUP.md`; каталог `.vscode/` больше не игнорируется (коммитится),
+  личные настройки — в `.vscode/settings.local.json`.
+- Раздел «Сборка через CMake-пресеты» и «Разработка из VS Code» в `README.md`.
 - Домен LLM-чата (первый C++-инкремент, `src/domain/`): неизменяемое значение
   `Message` (`MessageRole`), типизированная ошибка `ProviderError`, объект одного
   потокового ответа `Answer` (накопление текста, `complete`/`fail`/`cancel`,

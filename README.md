@@ -99,6 +99,26 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
 ./build/audio-assistant
 ```
 
+## Сборка через CMake-пресеты
+
+`CMakePresets.json` в корне содержит пресеты `audio-assistant-debug` и
+`audio-assistant-release`: они задают Ninja, Clang 18 и каталог сборки `build/<тип>`,
+а `conan install` выполняется автоматически при первой конфигурации (если `conan`
+есть в `PATH`).
+
+```bash
+cmake --preset audio-assistant-debug
+cmake --build --preset audio-assistant-debug
+ctest --preset audio-assistant-debug --output-on-failure
+```
+
+## Разработка из VS Code
+
+Готовая конфигурация рабочего пространства — в `.vscode/`: сборка по пресетам, запуск,
+отладка (`cppdbg` + gdb/lldb), `clang-format` и `clang-tidy` (по базе
+`build/debug/compile_commands.json`). Расширения перечислены в `.vscode/extensions.json`.
+Пошаговая инструкция и разбор частых проблем — `docs/VSCODE_SETUP.md`.
+
 ## Проверенные окружения
 
 - **Linux (Ubuntu 24.04, x86_64)**: проверено полностью — Debug/Release, ASan+UBSan,

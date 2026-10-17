@@ -1,0 +1,112 @@
+{
+  // ─────────────────────────────────────────────────────────────────
+  // Общие настройки рабочего пространства (Linux проверен; варианты для
+  // Windows/macOS помечены как непроверенные).
+  //
+  // Конфигурация сборки живёт в CMakePresets.json (audio-assistant-debug /
+  // audio-assistant-release) — здесь только то, что нужно IDE для сборки,
+  // запуска, отладки, clang-format и clang-tidy.
+  // Подробности: docs/VSCODE_SETUP.md.
+  // ─────────────────────────────────────────────────────────────────
+
+  // ── CMake Tools: источник истины — CMakePresets.json ───────────────
+  "cmake.useCMakePresets": "always",
+  "cmake.configureOnOpen": true,
+  "cmake.exportCompileCommandsFile": true,
+  "cmake.saveBeforeBuild": true,
+  // Conan ставится per-user (pipx / pip install --user) в ~/.local/bin и не
+  // всегда попадает в PATH процесса VS Code, запущенного из графической
+  // сессии. CMakeLists.txt сам вызывает `conan install` при первой
+  // конфигурации, поэтому PATH нужен именно на шаге configure.
+  "cmake.configureEnvironment": {
+    "PATH": "${env:HOME}/.local/bin:${env:PATH}"
+  },
+  "cmake.buildEnvironment": {
+    "PATH": "${env:HOME}/.local/bin:${env:PATH}"
+  },
+
+  // ── clangd: IntelliSense + clang-format + clang-tidy ──────────────
+  "clangd.path": "clangd",
+  "clangd.arguments": [
+    // compile_commands.json создаёт конфигурация Debug
+    // (CMAKE_EXPORT_COMPILE_COMMANDS=ON, каталог пресета build/debug).
+    "--compile-commands-dir=${workspaceFolder}/build/debug",
+    "--background-index",
+    // Диагностика из .clang-tidy прямо в редакторе.
+    "--clang-tidy",
+    "--completion-style=detailed",
+    "--header-insertion=never",
+    "--pch-storage=memory",
+    // Драйвер компилятора из пресета (CMAKE_CXX_COMPILER=clang++-18): clangd
+    // запрашивает у него системные include-пути. При другой версии Clang
+    // путь поправить.
+    "--query-driver=/usr/bin/clang++-18"
+  ],
+  // Расширение C/C++ используется только как отладчик (cppdbg): IntelliSense
+  // отдан clangd, иначе две модели кода конфликтуют между собой.
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.autocomplete": "disabled",
+  "C_Cpp.errorSquiggles": "disabled",
+  "C_Cpp.codeAnalysis.runAutomatically": false,
+  "C_Cpp.codeAnalysis.clangTidy.enabled": false,
+
+  // ── Форматирование ───────────────────────────────────────────────
+  // C++ — clangd (движок clang-format, стиль из .clang-format).
+  "editor.formatOnSave": false,
+  "[cpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+    "editor.formatOnSave": true
+  },
+  "[c]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+    "editor.formatOnSave": true
+  },
+  // QML на сохранении не форматируется: канонический форматтер проекта —
+  // qmlformat (задача «clang-format: check (repo script)»), а qmlls
+  // форматирует иначе.
+
+  // ── Qt / QML ─────────────────────────────────────────────────────
+  // ${userHome} — переменная расширений Qt (os.homedir()), работает на всех
+  // платформах; ${env:HOME} на Windows пуст.
+  "qt-core.qtInstallationRoot": "${userHome}/Qt",
+  "qt-qml.qmlls.customExePath": "${userHome}/Qt/6.8.3/gcc_64/bin/qmlls",
+  "qt-qml.qmlls.additionalImportPaths": [
+    "${workspaceFolder}/build/debug/qml"
+  ],
+
+  // ── Файлы и поиск ────────────────────────────────────────────────
+  "files.watcherExclude": {
+    "**/build*/**": true,
+    "**/.cache/**": true
+  },
+  "search.exclude": {
+    "**/build*/**": true,
+    "**/.cache/**": true
+  },
+
+  // ── Варианты для других ОС (не проверялись) ──────────────────────
+  "windows": {
+    "clangd.arguments": [
+      "--compile-commands-dir=${workspaceFolder}\\build\\debug",
+      "--background-index",
+      "--clang-tidy",
+      "--completion-style=detailed",
+      "--header-insertion=never"
+    ],
+    "cmake.configureEnvironment": {
+      "PATH": "${env:USERPROFILE}\\.local\\bin;${env:PATH}"
+    },
+    "qt-qml.qmlls.customExePath": "${userHome}/Qt/6.8.3/msvc2022_64/bin/qmlls.exe"
+  },
+  "osx": {
+    "clangd.arguments": [
+      "--compile-commands-dir=${workspaceFolder}/build/debug",
+      "--background-index",
+      "--clang-tidy",
+      "--completion-style=detailed",
+      "--header-insertion=never",
+      "--query-driver=/usr/bin/clang++"
+    ],
+    "qt-qml.qmlls.customExePath": "${userHome}/Qt/6.8.3/macos/bin/qmlls"
+  }
+}

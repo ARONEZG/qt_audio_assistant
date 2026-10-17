@@ -1,0 +1,22 @@
+{
+  // Расширения, нужные для сборки, запуска, отладки, clang-format и
+  // clang-tidy из VS Code. Установка: панель Extensions (или
+  // «Extensions: Show Recommended Extensions»).
+  "recommendations": [
+    // Сборка/тесты по CMakePresets.json и CTest.
+    "ms-vscode.cmake-tools",
+    // Навигация по коду, диагностика clang-tidy и форматирование clang-format.
+    "llvm-vs-code-extensions.vscode-clangd",
+    // Отладчик cppdbg (gdb/lldb). IntelliSense отключён — его даёт clangd.
+    "ms-vscode.cpptools",
+    // Qt C++ и QML (qmlls, предпросмотр QML).
+    "theqtcompany.qt-cpp",
+    "theqtcompany.qt-qml",
+    // conanfile.py — управление зависимостями.
+    "disroop.conan"
+  ],
+  "unwantedRecommendations": [
+    // Даёт IntelliSense параллельно clangd и конфликтует с ним.
+    "ms-vscode.cpptools-extension-pack"
+  ]
+}

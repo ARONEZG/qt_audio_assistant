@@ -1,0 +1,337 @@
+{
+  // Задачи рабочего пространства: сборка, запуск, тесты, clang-format,
+  // clang-tidy и полный локальный quality gate.
+  //
+  // Команды сборки/запуска идут через CMakePresets.json
+  // (audio-assistant-debug / audio-assistant-release), а не через
+  // дублирующие настройки CMake Tools.
+  // Требуется `conan` в PATH — на Linux/macOS задачи добавляют ~/.local/bin сами.
+  "version": "2.0.0",
+  "tasks": [
+    // ── Конфигурация ───────────────────────────────────────────────
+    {
+      "label": "cmake: configure (debug)",
+      "detail": "cmake --preset audio-assistant-debug (при первом запуске сам делает conan install)",
+      "type": "process",
+      "command": "cmake",
+      "args": [
+        "--preset",
+        "audio-assistant-debug"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      // Conan ставится per-user в ~/.local/bin. PATH задаётся только для
+      // Unix-платформ: на Windows другой разделитель, а конфигурация Windows
+      // здесь ещё не проверялась (см. docs/VSCODE_SETUP.md).
+      "linux": {
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "env": {
+            "PATH": "${env:HOME}/.local/bin:${env:PATH}"
+          }
+        }
+      },
+      "osx": {
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "env": {
+            "PATH": "${env:HOME}/.local/bin:${env:PATH}"
+          }
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "cmake: configure (release)",
+      "detail": "cmake --preset audio-assistant-release",
+      "type": "process",
+      "command": "cmake",
+      "args": [
+        "--preset",
+        "audio-assistant-release"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "linux": {
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "env": {
+            "PATH": "${env:HOME}/.local/bin:${env:PATH}"
+          }
+        }
+      },
+      "osx": {
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "env": {
+            "PATH": "${env:HOME}/.local/bin:${env:PATH}"
+          }
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+
+    // ── Сборка ─────────────────────────────────────────────────────
+    {
+      "label": "cmake: build (debug)",
+      "detail": "cmake --build --preset audio-assistant-debug",
+      "type": "process",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "--preset",
+        "audio-assistant-debug"
+      ],
+      "dependsOn": "cmake: configure (debug)",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "cmake: build (release)",
+      "detail": "cmake --build --preset audio-assistant-release",
+      "type": "process",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "--preset",
+        "audio-assistant-release"
+      ],
+      "dependsOn": "cmake: configure (release)",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+
+    // ── Запуск и тесты ─────────────────────────────────────────────
+    {
+      "label": "app: run (debug)",
+      "detail": "Запуск GUI без отладчика (build/debug/audio-assistant)",
+      "type": "process",
+      "command": "${workspaceFolder}/build/debug/audio-assistant",
+      "windows": {
+        "command": "${workspaceFolder}/build/debug/audio-assistant.exe"
+      },
+      "osx": {
+        "command": "${workspaceFolder}/build/debug/audio-assistant.app/Contents/MacOS/audio-assistant"
+      },
+      "dependsOn": "cmake: build (debug)",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "test: ctest (debug)",
+      "detail": "ctest --preset audio-assistant-debug",
+      "type": "process",
+      "command": "ctest",
+      "args": [
+        "--preset",
+        "audio-assistant-debug",
+        "--output-on-failure"
+      ],
+      "dependsOn": "cmake: build (debug)",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+
+    // ── Форматирование ────────────────────────────────────────────
+    {
+      "label": "clang-format: current file",
+      "detail": "clang-format -i для открытого файла (стиль .clang-format)",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "-c",
+        "cf=clang-format-18; command -v \"$cf\" >/dev/null 2>&1 || cf=clang-format; \"$cf\" -i \"$1\"",
+        "clang-format-task",
+        "${file}"
+      ],
+      "windows": {
+        "command": "clang-format.exe",
+        "args": [
+          "-i",
+          "${file}"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "clang-format: all project sources",
+      "detail": "clang-format -i по всем C++-файлам src/ и tests/",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "-c",
+        "cf=clang-format-18; command -v \"$cf\" >/dev/null 2>&1 || cf=clang-format; git ls-files -z src tests | grep -zE '\\.(cpp|h|hpp)$' | xargs -0 \"$cf\" -i"
+      ],
+      "windows": {
+        "command": "pwsh",
+        "args": [
+          "-NoProfile",
+          "-Command",
+          "git ls-files src tests | Where-Object { $_ -match '\\.(cpp|h|hpp)$' } | ForEach-Object { clang-format.exe -i $_ }"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "clang-format: check (repo script)",
+      "detail": "scripts/static-analysis.sh --format: clang-format --dry-run --Werror + qmlformat",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "scripts/static-analysis.sh",
+        "--format"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+
+    // ── clang-tidy ────────────────────────────────────────────────
+    {
+      "label": "clang-tidy: current file",
+      "detail": "clang-tidy по open file; база — build/debug/compile_commands.json",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "-c",
+        "ct=clang-tidy-18; command -v \"$ct\" >/dev/null 2>&1 || ct=clang-tidy; \"$ct\" -p \"${workspaceFolder}/build/debug\" --warnings-as-errors='*' \"$1\"",
+        "clang-tidy-task",
+        "${file}"
+      ],
+      "windows": {
+        "command": "clang-tidy.exe",
+        "args": [
+          "-p",
+          "${workspaceFolder}/build/debug",
+          "--warnings-as-errors=*",
+          "${file}"
+        ]
+      },
+      "dependsOn": "cmake: configure (debug)",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "clang-tidy: all project sources (repo script)",
+      "detail": "scripts/static-analysis.sh --linters: clang-tidy + clazy по compile_commands.json",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "scripts/static-analysis.sh",
+        "--linters"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+
+    // ── Полный локальный quality gate ─────────────────────────────
+    {
+      "label": "quality: full gate (ci-check.sh)",
+      "detail": "scripts/ci-check.sh: формат + QML, Debug/Release сборка и тесты, статический анализ, санитайзеры, покрытие",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "scripts/ci-check.sh"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "linux": {
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "env": {
+            "PATH": "${env:HOME}/.local/bin:${env:PATH}"
+          }
+        }
+      },
+      "osx": {
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "env": {
+            "PATH": "${env:HOME}/.local/bin:${env:PATH}"
+          }
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    }
+  ]
+}
