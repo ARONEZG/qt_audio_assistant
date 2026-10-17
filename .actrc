@@ -1,0 +1,22 @@
+# ──────────────────────────────────────────────────────────────
+# Конфигурация act — локальный прогон GitHub Actions
+#
+# Установка:  https://nektosact.com/installation/
+#   curl -sSf https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash
+#   (или через Homebrew, Chocolatey, AUR)
+#
+# Использование:
+#   act                              # запустить push workflow
+#   act pull_request                 # запустить PR workflow
+#   act -j format-and-qml            # конкретная job
+#   act -n                           # dry-run (показать что будет)
+#
+# Требуется Docker. Для Ubuntu 24.04 образ:
+#   act -P ubuntu-24.04=catthehacker/ubuntu:act-24.04
+# ──────────────────────────────────────────────────────────────
+
+# Default platform mapping: GitHub runner → Docker image
+-P ubuntu-24.04=catthehacker/ubuntu:act-24.04
+
+# Verbose output for debugging
+--verbose

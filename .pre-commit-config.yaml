@@ -1,0 +1,77 @@
+# ──────────────────────────────────────────────────────────────
+# Pre-commit hooks — быстрые проверки перед каждым коммитом.
+#
+# Установка (один раз):
+#   pre-commit install
+#
+# Запуск вручную на всех файлах:
+#   pre-commit run --all-files
+#
+# Пропустить hooks (только в исключительном случае):
+#   git commit --no-verify -m "..."
+#
+# Полные quality gates (сборка, тесты, санитайзеры) — не здесь,
+# они в CI и scripts/ci-check.sh.
+# ──────────────────────────────────────────────────────────────
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  - repo: local
+    hooks:
+      # clang-format: project-owned .clang-format
+      - id: clang-format
+        name: "clang-format (C++)"
+        entry: >
+          bash -c '
+            FILES=$(git diff --cached --name-only --diff-filter=ACMR |
+                    grep -E "\.(cpp|h|hpp)$" || true);
+            if [ -n "$FILES" ]; then
+              clang-format-18 --dry-run --Werror $FILES;
+            fi'
+        language: system
+        pass_filenames: false
+        types: [c++]
+
+      # qmlformat: project QML files
+      - id: qmlformat
+        name: "qmlformat"
+        entry: >
+          bash -c '
+            FILES=$(git diff --cached --name-only --diff-filter=ACMR |
+                    grep -E "\.qml$" || true);
+            TMP=$(mktemp);
+            for f in $FILES; do
+              /usr/lib/qt6/bin/qmlformat "$f" > "$TMP";
+              diff -q "$f" "$TMP" || { echo "qmlformat would modify $f"; exit 1; };
+            done;
+            rm -f "$TMP"'
+        language: system
+        pass_filenames: false
+        types: [file]
+        files: \.qml$
+
+      # qmllint: QML lint
+      - id: qmllint
+        name: "qmllint"
+        entry: >
+          bash -c '
+            FILES=$(git diff --cached --name-only --diff-filter=ACMR |
+                    grep -E "\.qml$" || true);
+            if [ -n "$FILES" ]; then
+              /usr/lib/qt6/bin/qmllint $FILES;
+            fi'
+        language: system
+        pass_filenames: false
+        types: [file]
+        files: \.qml$

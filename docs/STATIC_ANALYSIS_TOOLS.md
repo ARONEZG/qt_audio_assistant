@@ -83,6 +83,26 @@ sudo apt-get install iwyu
 
 ## Состояние инструментов в текущем окружении
 
-Проверено ранее: `clang-format 18.1.3`, `clang-tidy 18.1.3`. Отсутствуют: `clang`/`clang++`, `ninja`,
-`cppcheck`, `iwyu`, `clazy`, `scan-build`, `CodeChecker`. До установки обязательные Clang-шаги
-(punkt 3–4 в `AGENTS.md`) не могут выполняться, поэтому строгую сборку следует считать заблокированной.
+На 2026-10-16 доступны:
+
+| Инструмент         | Версия          | Источник       | Статус      |
+|---------------------|-----------------|----------------|-------------|
+| clang-18            | 18.1.3          | apt (Ubuntu)   | OK          |
+| clang-format-18     | 18.1.3          | apt (Ubuntu)   | OK          |
+| clang-tidy-18       | 18.1.3          | apt (Ubuntu)   | OK          |
+| ninja-build         | 1.11.1          | apt (Ubuntu)   | OK          |
+| cppcheck            | 2.13.0          | apt (Ubuntu)   | OK          |
+| iwyu                | 0.21 (clang 17) | apt (Ubuntu)   | OK          |
+| clazy               | 1.11-4ubuntu2   | apt (Ubuntu)   | OK          |
+| scan-build-18       | 18.1.3          | apt (Ubuntu)   | OK          |
+| codechecker         | 6.29.1          | pipx           | OK          |
+| pre-commit          | 4.7.0           | pipx           | OK          |
+| qmlformat (Qt6)     | —               | apt (qt6-tools)     | OK |
+| qmllint (Qt6)       | —               | apt (qt6-tools)     | OK |
+| qmltyperegistrar    | —               | apt (qt6-tools)     | OK |
+| llvm-profdata-18    | 18.1.3          | apt (Ubuntu)   | OK          |
+| llvm-cov-18         | 18.1.3          | apt (Ubuntu)   | OK          |
+
+Недостающие: `qmlformat` доступен как `/usr/lib/qt6/bin/qmlformat`,
+но в `PATH` по умолчанию не входит. Локальный скрипт `scripts/ci-check.sh`
+разрешает его по полному пути.

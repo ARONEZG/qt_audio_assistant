@@ -240,7 +240,7 @@ step_coverage() {
     "$cov" report \
         -instr-profile=code.profdata \
         -ignore-filename-regex='.*(moc_|_autogen|build|/usr/).*' \
-        $(find . -name '*.so' -o -name 'audio-assistant' -o -name 'tst_*' | grep -v autogen) 2>&1 || true
+        $(find . -type f -name '*.so' -o -type f -name 'audio-assistant' -o -type f -name 'tst_*' | grep -v autogen) 2>&1 || true
 
     pass "Coverage report generated"
 }

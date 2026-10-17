@@ -32,3 +32,8 @@ cmake_install.cmake
 # pinning via lockfiles is adopted.
 CMakeUserPresets.json
 __pycache__/
+
+# Cache / profiling
+.cache/
+*.profraw
+*.profdata
