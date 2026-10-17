@@ -17,6 +17,9 @@ class FakeProvider : public Provider {
 
 public:
     explicit FakeProvider(QObject* parent = nullptr);
+    // A provider with an explicit identity, so a test can offer several distinct
+    // providers and check that each minted instance keeps its own identity.
+    FakeProvider(QString id, QString displayName, QObject* parent = nullptr);
     ~FakeProvider() override;
 
     [[nodiscard]] QString id() const override;
@@ -32,6 +35,8 @@ public:
     void destroyLastAnswer();
 
 private:
+    QString id_;
+    QString displayName_;
     Answer* lastAnswer_ = nullptr;
     std::vector<Message> lastHistory_;
     int respondCount_ = 0;

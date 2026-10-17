@@ -258,8 +258,11 @@ find_package(LLMQore REQUIRED)
 add_library(audio-assistant-domain STATIC
     src/domain/Answer.cpp
     src/domain/Chat.cpp
+    src/domain/Chats.cpp
     src/domain/Message.cpp
     src/domain/Provider.cpp
+    src/domain/ProviderOffer.cpp
+    src/domain/Providers.cpp
 )
 
 set_target_properties(audio-assistant-domain PROPERTIES
@@ -356,6 +359,16 @@ audio_assistant_add_domain_test(tst_answer
 )
 audio_assistant_add_domain_test(tst_chat
     tests/tst_chat.cpp
+    tests/FakeProvider.cpp
+    tests/FakeProvider.h
+)
+audio_assistant_add_domain_test(tst_providers
+    tests/tst_providers.cpp
+    tests/FakeProvider.cpp
+    tests/FakeProvider.h
+)
+audio_assistant_add_domain_test(tst_chats
+    tests/tst_chats.cpp
     tests/FakeProvider.cpp
     tests/FakeProvider.h
 )
