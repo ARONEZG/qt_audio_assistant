@@ -53,3 +53,6 @@
 - Git-hook'и доработаны: устранён конфликт с pre-commit framework (quality-проверки
   делегируются из `.githooks/pre-commit`, `pre-commit install` в репозитории не
   используется) и блокируется root-коммит в unborn `main` (`git symbolic-ref`).
+- Значимая работа ведётся в отдельных git-worktree (`scripts/new-worktree.sh`,
+  `scripts/rm-worktree.sh`, `docs/WORKTRES.md`): основной чекаут остаётся стабильным,
+  его можно собирать и запускать параллельно с работой агента.
