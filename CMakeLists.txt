@@ -117,6 +117,41 @@ find_package(Qt6 REQUIRED COMPONENTS
 # silently building with a different version.
 find_package(spdlog 1.14 REQUIRED)
 
+# ── Strict warning profile (shared by all project-owned targets) ──
+# The zero-warning profile from src/AGENTS.md lives in one INTERFACE target so it
+# is defined once and applied per target instead of being copy-pasted.
+add_library(audio-assistant-strict INTERFACE)
+
+target_compile_options(audio-assistant-strict INTERFACE
+    -std=c++20
+    -Wall -Wextra -Wpedantic -Werror
+    -Weverything
+    # Qt and moc-generated code use C++98-incompatible constructs (nullptr,
+    # constinit, etc.); these diagnostics are not applicable to C++20/Qt.
+    -Wno-c++98-compat
+    -Wno-c++98-compat-pedantic
+    -Wno-c++20-compat
+    -Wno-unknown-warning-option
+    -Wconversion -Wsign-conversion -Wimplicit-fallthrough
+    -Wcast-align -Wcast-qual -Wdouble-promotion -Wformat=2
+    -Wnull-dereference -Woverloaded-virtual -Wshadow-all
+    -Wswitch-enum -Wundef -Wunreachable-code -Wunused
+)
+
+# Qt/QObject-specific suppressions, scoped to the targets that actually pull in
+# Qt value types and moc-generated signal dispatchers (the domain library and
+# its tests) instead of being applied to every project target.
+add_library(audio-assistant-qt-warnings INTERFACE)
+
+target_compile_options(audio-assistant-qt-warnings INTERFACE
+    # Qt value types are pointer-aligned, so domain value objects carry internal
+    # tail padding; the struct layout is not a public ABI contract here.
+    -Wno-padded
+    # moc-generated dispatchers index the signal-argument array directly; this
+    # pattern lives only in generated code and cannot be rewritten by hand.
+    -Wno-unsafe-buffer-usage
+)
+
 # ── LLMQore (LLM client library) ────────────────────────────
 # Pinned to the released tag v0.8.0 (MIT). Fetched as a SYSTEM subproject so
 # its headers are consumed as system headers and its own warning settings do
@@ -132,6 +167,31 @@ FetchContent_Declare(LLMQore
     GIT_TAG v0.8.0
 )
 FetchContent_MakeAvailable(LLMQore)
+
+# ── Domain library ──────────────────────────────────────────
+# Framework-agnostic chat domain (immutable values, provider role interface,
+# orchestration). Built as a static library so the executable and every test
+# target link the same implementation.
+add_library(audio-assistant-domain STATIC
+    src/domain/Answer.cpp
+    src/domain/Chat.cpp
+    src/domain/Message.cpp
+    src/domain/Provider.cpp
+)
+
+set_target_properties(audio-assistant-domain PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+# Consumers include domain headers as "domain/<Header>.h".
+target_include_directories(audio-assistant-domain PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+)
+
+target_link_libraries(audio-assistant-domain
+    PUBLIC Qt6::Core
+    PRIVATE audio-assistant-strict audio-assistant-qt-warnings
+)
 
 # ── QML module ──────────────────────────────────────────────
 # Put Main.qml at the root of the module resources (default behaviour
@@ -161,23 +221,9 @@ set_target_properties(audio-assistant PROPERTIES
     CXX_EXTENSIONS OFF
 )
 
-target_compile_options(audio-assistant PRIVATE
-    -std=c++20
-    -Wall -Wextra -Wpedantic -Werror
-    -Weverything
-    # Qt and moc-generated code use C++98-incompatible constructs (nullptr,
-    # constinit, etc.); these diagnostics are not applicable to C++20/Qt.
-    -Wno-c++98-compat
-    -Wno-c++98-compat-pedantic
-    -Wno-c++20-compat
-    -Wno-unknown-warning-option
-    -Wconversion -Wsign-conversion -Wimplicit-fallthrough
-    -Wcast-align -Wcast-qual -Wdouble-promotion -Wformat=2
-    -Wnull-dereference -Woverloaded-virtual -Wshadow-all
-    -Wswitch-enum -Wundef -Wunreachable-code -Wunused
-)
-
 target_link_libraries(audio-assistant PRIVATE
+    audio-assistant-strict
+    audio-assistant-domain
     audio-assistant-qml
     Qt6::Core
     Qt6::Gui
@@ -192,6 +238,41 @@ target_link_libraries(audio-assistant PRIVATE
 # ── Tests ───────────────────────────────────────────────────
 enable_testing()
 
+# Registers a Qt Test target against the domain library and wires it into CTest.
+# GUI/QML tests use their own target below (they need the QML module).
+function(audio_assistant_add_domain_test target)
+    qt_add_executable(${target} ${ARGN})
+
+    set_target_properties(${target} PROPERTIES
+        CXX_EXTENSIONS OFF
+    )
+
+    target_link_libraries(${target} PRIVATE
+        audio-assistant-strict
+        audio-assistant-qt-warnings
+        audio-assistant-domain
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME ${target} COMMAND ${target})
+    set_tests_properties(${target} PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+endfunction()
+
+audio_assistant_add_domain_test(tst_message
+    tests/tst_message.cpp
+)
+audio_assistant_add_domain_test(tst_answer
+    tests/tst_answer.cpp
+)
+audio_assistant_add_domain_test(tst_chat
+    tests/tst_chat.cpp
+    tests/FakeProvider.cpp
+    tests/FakeProvider.h
+)
+
 qt_add_executable(tst_main
     tests/tst_main.cpp
 )
@@ -200,23 +281,8 @@ set_target_properties(tst_main PROPERTIES
     CXX_EXTENSIONS OFF
 )
 
-target_compile_options(tst_main PRIVATE
-    -std=c++20
-    -Wall -Wextra -Wpedantic -Werror
-    -Weverything
-    # Qt and moc-generated code use C++98-incompatible constructs (nullptr,
-    # constinit, etc.); these diagnostics are not applicable to C++20/Qt.
-    -Wno-c++98-compat
-    -Wno-c++98-compat-pedantic
-    -Wno-c++20-compat
-    -Wno-unknown-warning-option
-    -Wconversion -Wsign-conversion -Wimplicit-fallthrough
-    -Wcast-align -Wcast-qual -Wdouble-promotion -Wformat=2
-    -Wnull-dereference -Woverloaded-virtual -Wshadow-all
-    -Wswitch-enum -Wundef -Wunreachable-code -Wunused
-)
-
 target_link_libraries(tst_main PRIVATE
+    audio-assistant-strict
     audio-assistant-qml
     Qt6::Gui
     Qt6::Qml
