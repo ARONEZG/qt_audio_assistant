@@ -215,6 +215,9 @@ step_coverage() {
     }
 
     info "Running tests for profiling data..."
+    # Drop stale profiles from earlier runs: merging profiles built against
+    # different binaries can make llvm-cov stall.
+    rm -f "$build_dir"/code-*.profraw
     LLVM_PROFILE_FILE="$build_dir/code-%p.profraw" \
         ctest --test-dir "$build_dir" --output-on-failure -j"$(nproc)" || {
         warn "Some tests failed (coverage data may be incomplete)"
@@ -237,10 +240,17 @@ step_coverage() {
         return 0
     }
 
+    # Report coverage for project-owned binaries only. Third-party code fetched
+    # into _deps/ (LLMQore) and Qt build helpers under .qt/ are not instrumented
+    # for coverage and must never be scanned.
+    local objects
+    objects=$(find . -type d \( -name '_deps' -o -name '.qt' -o -name '*_autogen' \) -prune -o \
+        -type f \( -name 'audio-assistant' -o -name 'tst_*' -o -name '*.so' \) -print)
+
     "$cov" report \
         -instr-profile=code.profdata \
-        -ignore-filename-regex='.*(moc_|_autogen|build|/usr/).*' \
-        $(find . -type f -name '*.so' -o -type f -name 'audio-assistant' -o -type f -name 'tst_*' | grep -v autogen) 2>&1 || true
+        -ignore-filename-regex='.*(moc_|_autogen|_deps|build|/usr/|\.qt/).*' \
+        $objects 2>&1 || true
 
     pass "Coverage report generated"
 }
