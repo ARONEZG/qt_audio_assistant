@@ -2,12 +2,30 @@
 # ─────────────────────────────────────────────────────────────────
 # static-analysis.sh — единый скрипт статического анализа
 #
-# Запускает все инструменты статического анализа, перечисленные
-# в AGENTS.md §8, через один вызов. Модели (AI и разработчику)
-# не нужно помнить отдельные команды каждого инструмента.
+# Запускает инструменты статического анализа через один вызов.
+# Модели (AI и разработчику) не нужно помнить отдельные команды.
+#
+# Быстрый прогон (по умолчанию) зеркалит CI-джобу «Static Analysis»:
+# clang-format, qmlformat, qmllint, clang-tidy, clazy, cppcheck.
+# Тяжёлые необязательные анализаторы (scan-build, iwyu, CodeChecker)
+# вынесены в режим --deep: они не входят в обязательный CI-gate и
+# дороги по времени.
+#
+# Анализу подлежит только собственный код репозитория (src/, tests/,
+# qml/). Сторонние библиотеки (LLMQore в _deps/), moc/qml-генерация и
+# Qt build helpers исключаются из анализа явно.
+#
+# Скорость:
+#   * clang-tidy/clazy распараллелены по числу CPU (ANALYSIS_JOBS);
+#   * анализируются только translation units (.cpp) — заголовки
+#     проверяются через включающие их TU (HeaderFilterRegex уже
+#     ограничивает диагностику src/tests), поэтому отдельный прогон
+#     по .h только замедлял работу;
+#   * CodeChecker получает отфильтрованную базу (только src/ + tests/).
 #
 # Использование:
-#   scripts/static-analysis.sh                    # полный прогон
+#   scripts/static-analysis.sh                    # быстрый прогон (CI parity)
+#   scripts/static-analysis.sh --deep             # быстрый + scan-build/iwyu/CodeChecker
 #   scripts/static-analysis.sh --quick            # только формат + QML
 #   scripts/static-analysis.sh --all              # то же, что без флагов
 #   scripts/static-analysis.sh --format           # только clang-format + QML format
@@ -39,6 +57,35 @@ pass()  { echo -e "${GREEN}[PASS]${NC} $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 info()  { echo -e "[INFO] $*"; }
+
+# ── Parallelism ─────────────────────────────────────────────
+# Analyzers are single-threaded; one process per translation unit is the
+# cheapest way to use the machine.
+ANALYSIS_JOBS="${ANALYSIS_JOBS:-}"
+analysis_jobs() {
+    if [ -n "$ANALYSIS_JOBS" ]; then
+        echo "$ANALYSIS_JOBS"
+    elif command -v nproc &>/dev/null; then
+        nproc
+    elif command -v sysctl &>/dev/null; then
+        sysctl -n hw.ncpu 2>/dev/null || echo 4
+    else
+        echo 4
+    fi
+}
+
+# Runs a tool once per line of stdin, up to ANALYSIS_JOBS processes in
+# parallel. The tool command is passed as arguments and each stdin line is
+# appended as the final argument. Per-invocation output is buffered and only
+# printed when that invocation fails, so parallel diagnostics stay readable.
+# Returns non-zero if any invocation failed.
+run_on_files() {
+    local jobs
+    jobs=$(analysis_jobs)
+    xargs -P "$jobs" -I{} bash -c '
+        output=$("$@" 2>&1) || { printf "%s\n" "$output"; exit 1; }
+    ' _ "$@" {}
+}
 
 # ── Tool discovery ──────────────────────────────────────────
 
@@ -142,13 +189,16 @@ find_debug_build_dir() {
     echo ""
 }
 
-# ── Helper: C++ sources ────────────────────────────────────
+# ── Helper: C++ / QML sources ───────────────────────────────
 
 cpp_sources() {
     find "$PROJECT_ROOT/src" "$PROJECT_ROOT/tests" \
         -name '*.cpp' -o -name '*.h' -o -name '*.hpp' 2>/dev/null | sort
 }
 
+# Translation units only. Headers are parsed through the TU that includes
+# them (HeaderFilterRegex already restricts findings to src/tests), so listing
+# them separately would re-parse every header without a useful compile command.
 cpp_impl_sources() {
     find "$PROJECT_ROOT/src" "$PROJECT_ROOT/tests" \
         -name '*.cpp' 2>/dev/null | sort
@@ -156,6 +206,60 @@ cpp_impl_sources() {
 
 qml_sources() {
     find "$PROJECT_ROOT/qml" -name '*.qml' 2>/dev/null | sort
+}
+
+# Directories that are never project-owned: build trees, fetched dependencies
+# and Qt/moc generation.
+third_party_excludes() {
+    printf '%s\n' \
+        "$PROJECT_ROOT/build" \
+        "$PROJECT_ROOT/build-debug" \
+        "$PROJECT_ROOT/build-release" \
+        "$PROJECT_ROOT/build-asan" \
+        "$PROJECT_ROOT/build-cov" \
+        "$PROJECT_ROOT/build-scan" \
+        "$PROJECT_ROOT/.git"
+}
+
+# ── Filtered compilation database ───────────────────────────
+# Produces a compile_commands.json limited to src/ + tests/. Analyzers that
+# consume the whole database (CodeChecker) would otherwise walk every LLMQore
+# and generated translation unit under _deps/ and .qt/.
+project_compile_commands() {
+    local build_dir="$1"
+    local db="$build_dir/compile_commands.json"
+    if [ ! -f "$db" ]; then
+        return 1
+    fi
+    if ! command -v python3 &>/dev/null; then
+        # No python3: fall back to the full database (still correct, just
+        # wider than we would like).
+        echo "$db"
+        return 0
+    fi
+    local out="$build_dir/compile_commands.project.json"
+    python3 - "$db" "$PROJECT_ROOT" "$out" <<'PY'
+import json
+import os
+import sys
+
+source_db, root, output = sys.argv[1], sys.argv[2], sys.argv[3]
+roots = (os.path.join(root, "src") + os.sep, os.path.join(root, "tests") + os.sep)
+with open(source_db, encoding="utf-8") as handle:
+    entries = json.load(handle)
+kept = [entry for entry in entries if entry.get("file", "").startswith(roots)]
+with open(output, "w", encoding="utf-8") as handle:
+    json.dump(kept, handle, indent=2)
+PY
+    echo "$out"
+}
+
+# ccache launcher flags, when available, so the helper rebuild triggered by a
+# missing database is not paid in full on every run.
+ccache_cmake_args() {
+    if command -v ccache &>/dev/null; then
+        printf '%s' "-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+    fi
 }
 
 # ── Step functions ──────────────────────────────────────────
@@ -279,17 +383,32 @@ ensure_compile_commands() {
         return 1
     }
 
+    local launcher
+    launcher=$(ccache_cmake_args)
+    # shellcheck disable=SC2086  # ccache flag list is intentionally word-split
     CC="$cc" CXX="$cpp" cmake -S "$PROJECT_ROOT" -B "$build_dir" \
         -G Ninja -DCMAKE_BUILD_TYPE=Debug \
-        -DCONAN_BUILD_DIR="$conan_dir" 2>&1 | tail -3 || {
+        -DCONAN_BUILD_DIR="$conan_dir" \
+        $launcher 2>&1 | tail -3 || {
         fail "CMake configure (Debug) failed"
         return 1
     }
-    cmake --build "$build_dir" -j"$(nproc)" 2>&1 | tail -3 || {
+    cmake --build "$build_dir" -j"$(analysis_jobs)" 2>&1 | tail -3 || {
         fail "Debug build failed"
         return 1
     }
     echo "$build_dir"
+}
+
+# Resolves the compilation database to use for a project-only analyzer.
+project_db() {
+    local build_dir="$1"
+    local db
+    db=$(project_compile_commands "$build_dir") || db="$build_dir/compile_commands.json"
+    if [ -z "$db" ]; then
+        db="$build_dir/compile_commands.json"
+    fi
+    echo "$db"
 }
 
 step_clang_tidy() {
@@ -305,13 +424,19 @@ step_clang_tidy() {
     build_dir=$(ensure_compile_commands) || return 1
 
     local files
-    files=$(cpp_sources)
+    files=$(cpp_impl_sources)
     if [ -z "$files" ]; then
         warn "No source files found"
         return 0
     fi
 
-    if $ct -p "$build_dir" --warnings-as-errors='*' $files; then
+    local db
+    db=$(project_db "$build_dir")
+
+    info "   $(wc -l <<< "$files") translation unit(s), $(analysis_jobs) job(s)"
+
+    if printf '%s\n' "$files" \
+        | run_on_files "$ct" -p "$db" --warnings-as-errors='*'; then
         pass "clang-tidy OK"
     else
         fail "clang-tidy found issues"
@@ -338,10 +463,11 @@ step_clazy() {
         return 0
     fi
 
-    if $cl \
-        -checks=level0,level1,level2 \
-        -p "$build_dir/compile_commands.json" \
-        $files; then
+    local db
+    db=$(project_db "$build_dir")
+
+    if printf '%s\n' "$files" \
+        | run_on_files "$cl" -checks=level0,level1,level2 -p "$db"; then
         pass "clazy OK"
     else
         fail "clazy found issues"
@@ -358,13 +484,19 @@ step_cppcheck() {
         return 0
     fi
 
+    local excludes=""
+    local dir
+    while IFS= read -r dir; do
+        excludes="$excludes -i $dir"
+    done < <(third_party_excludes)
+
+    # shellcheck disable=SC2086  # -i exclusion list is intentionally word-split
+    # No -j: cppcheck disables the unusedFunction check when run in parallel,
+    # which would silently drop coverage. It is fast enough single-threaded.
     cppcheck --enable=all --inconclusive --error-exitcode=1 \
         --suppress=missingIncludeSystem \
         -I "$PROJECT_ROOT/src" \
-        -i "$PROJECT_ROOT/build-debug" 2>/dev/null \
-        -i "$PROJECT_ROOT/build-release" 2>/dev/null \
-        -i "$PROJECT_ROOT/build-asan" 2>/dev/null \
-        -i "$PROJECT_ROOT/build-cov" 2>/dev/null \
+        $excludes \
         "$PROJECT_ROOT/src" "$PROJECT_ROOT/tests" 2>&1 || {
         warn "cppcheck found issues (optional, non-blocking)"
     }
@@ -404,19 +536,30 @@ step_scan_build() {
         return 0
     }
 
+    local launcher
+    launcher=$(ccache_cmake_args)
+    # shellcheck disable=SC2086  # ccache flag list is intentionally word-split
     CC="$cc" CXX="$cpp" cmake -S "$PROJECT_ROOT" -B "$build_dir" \
         -G Ninja -DCMAKE_BUILD_TYPE=Debug \
-        -DCONAN_BUILD_DIR="$conan_dir" 2>&1 | tail -3 || {
+        -DCONAN_BUILD_DIR="$conan_dir" \
+        $launcher 2>&1 | tail -3 || {
         warn "scan-build: CMake configure failed — skipping"
         return 0
     }
 
+    # Third-party trees (_deps/) are never reported on; the report goes to a
+    # scratch dir so a previous analysis is not reused.
+    local report_dir
+    report_dir=$(mktemp -d)
     if $sb --use-cc="$cc" --use-c++="$cpp" \
-        cmake --build "$build_dir" -j"$(nproc)" 2>&1; then
+        --exclude "$build_dir/_deps" \
+        -o "$report_dir" \
+        cmake --build "$build_dir" -j"$(analysis_jobs)" 2>&1; then
         pass "scan-build OK"
     else
         warn "scan-build found issues (optional, non-blocking)"
     fi
+    rm -rf "$report_dir"
 }
 
 step_iwyu() {
@@ -432,7 +575,7 @@ step_iwyu() {
     build_dir=$(ensure_compile_commands) || return 1
 
     local files
-    files=$(cpp_sources)
+    files=$(cpp_impl_sources)
     if [ -z "$files" ]; then
         warn "No source files found"
         return 0
@@ -464,11 +607,16 @@ step_codechecker() {
     local build_dir
     build_dir=$(ensure_compile_commands) || return 1
 
+    # Restrict the database to src/ + tests/ so CodeChecker never analyzes
+    # third-party (LLMQore) or generated code.
+    local db
+    db=$(project_db "$build_dir")
+
     local results_dir
     results_dir=$(mktemp -d)
 
-    if CodeChecker analyze "$build_dir/compile_commands.json" \
-        --analyzers clang-tidy,cppcheck \
+    if CodeChecker analyze "$db" \
+        --analyzers clang-tidy cppcheck \
         --output "$results_dir" 2>&1; then
         pass "CodeChecker analyze OK"
     else
@@ -506,6 +654,8 @@ list_tools() {
         echo "  compile_commands.json: NOT FOUND (будет создан при --linters)"
     fi
     echo ""
+    echo "  analysis jobs: $(analysis_jobs) (переопределить: ANALYSIS_JOBS=N)"
+    echo ""
 }
 
 # ── Help ────────────────────────────────────────────────────
@@ -514,19 +664,19 @@ show_help() {
     cat << EOF
 static-analysis.sh — единый скрипт статического анализа
 
-Запускает все инструменты статического анализа из AGENTS.md §8
-через один вызов. Модели (AI и разработчику) не нужно помнить
-отдельные команды каждого инструмента.
+Быстрый прогон (по умолчанию) зеркалит CI-джобу «Static Analysis» и
+анализирует только собственный код (src/, tests/, qml/).
 
 Использование:
-  scripts/static-analysis.sh                    полный прогон
+  scripts/static-analysis.sh                    быстрый прогон (CI parity)
+  scripts/static-analysis.sh --deep             быстрый + тяжёлые необязательные
   scripts/static-analysis.sh --quick            только формат + QML
   scripts/static-analysis.sh --all              то же, что без флагов
   scripts/static-analysis.sh --format           только clang-format + qmlformat
   scripts/static-analysis.sh --qmllint          только qmllint
   scripts/static-analysis.sh --linters          clang-tidy + clazy
-  scripts/static-analysis.sh --cppchecker      cppcheck (опционально)
-  scripts/static-analysis.sh --scan-build      Clang Static Analyzer (опционально)
+  scripts/static-analysis.sh --cppcheck         cppcheck (опционально)
+  scripts/static-analysis.sh --scan-build       Clang Static Analyzer (опционально)
   scripts/static-analysis.sh --iwyu             Include What You Use (опционально)
   scripts/static-analysis.sh --codechecker      CodeChecker (опционально)
   scripts/static-analysis.sh --list-tools       показать найденные инструменты
@@ -536,11 +686,43 @@ static-analysis.sh — единый скрипт статического ана
   clang-format, qmlformat, qmllint, clang-tidy, clazy
 
 Опциональные шаги (только предупреждают при ошибке):
-  cppcheck, scan-build, iwyu, CodeChecker
+  cppcheck — в быстром прогоне;
+  scan-build, iwyu, CodeChecker — только в режиме --deep.
+
+Переменные окружения:
+  ANALYSIS_JOBS   число параллельных процессов анализа (по умолчанию nproc)
 EOF
 }
 
 # ── Main ────────────────────────────────────────────────────
+
+mandatory_checks() {
+    local failed=0
+    echo "--- Format checks ---"
+    step_clang_format || failed=$((failed + 1))
+    step_qmlformat || failed=$((failed + 1))
+    step_qmllint || failed=$((failed + 1))
+    echo ""
+
+    echo "--- Linters ---"
+    step_clang_tidy || failed=$((failed + 1))
+    step_clazy || failed=$((failed + 1))
+    echo ""
+
+    echo "--- cppcheck ---"
+    step_cppcheck || true
+    echo ""
+
+    return "$failed"
+}
+
+deep_checks() {
+    echo "--- Deep analysis (optional, non-blocking) ---"
+    step_scan_build || true
+    step_iwyu || true
+    step_codechecker || true
+    echo ""
+}
 
 main() {
     cd "$PROJECT_ROOT"
@@ -583,9 +765,9 @@ main() {
             echo "=== Static Analysis: Format + QML ==="
             echo ""
             local failed_q=0
-            step_clang_format || ((failed_q++))
-            step_qmlformat || ((failed_q++))
-            step_qmllint || ((failed_q++))
+            step_clang_format || failed_q=$((failed_q + 1))
+            step_qmlformat || failed_q=$((failed_q + 1))
+            step_qmllint || failed_q=$((failed_q + 1))
             echo ""
             if [ "$failed_q" -eq 0 ]; then
                 pass "All format + QML checks passed!"
@@ -594,29 +776,27 @@ main() {
                 exit 1
             fi
             ;;
+        --deep)
+            echo "=== Static Analysis: Fast + Deep ==="
+            echo ""
+            local failed_d=0
+            mandatory_checks || failed_d=$?
+            deep_checks
+            echo "======================"
+            if [ "$failed_d" -eq 0 ]; then
+                pass "All mandatory static analysis checks passed!"
+                exit 0
+            else
+                fail "$failed_d mandatory step(s) failed"
+                exit 1
+            fi
+            ;;
         --all|--)
-            echo "=== Static Analysis: Full Run ==="
+            echo "=== Static Analysis: Fast Run (CI parity) ==="
             echo ""
 
             local failed=0
-
-            echo "--- Format checks ---"
-            step_clang_format || ((failed++))
-            step_qmlformat || ((failed++))
-            step_qmllint || ((failed++))
-            echo ""
-
-            echo "--- Linters ---"
-            step_clang_tidy || ((failed++))
-            step_clazy || ((failed++))
-            echo ""
-
-            echo "--- Optional checks ---"
-            step_cppcheck || true
-            step_scan_build || true
-            step_iwyu || true
-            step_codechecker || true
-            echo ""
+            mandatory_checks || failed=$?
 
             echo "======================"
             if [ "$failed" -eq 0 ]; then
