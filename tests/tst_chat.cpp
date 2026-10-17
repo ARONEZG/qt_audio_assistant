@@ -29,6 +29,7 @@ private slots:
     void test_sequentialSendsPreserveHistory();
     void test_historyIsPassedToProvider();
     void test_emptyTextIsAccepted();
+    void test_providerDestroyingAnswerResetsStreaming();
 };
 
 TestChat::TestChat(QObject* parent) : QObject(parent) {
@@ -113,6 +114,7 @@ void TestChat::test_cancelResetsStreamingWithoutReply() {
     const QSignalSpy kStateSpy(&chat, &Chat::stateChanged);
     const QSignalSpy kReplySpy(&chat, &Chat::replyReceived);
     const QSignalSpy kFailedSpy(&chat, &Chat::failed);
+    const QSignalSpy kCancelledSpy(&chat, &Chat::cancelled);
     Answer* answer = fake->lastAnswer();
     answer->appendChunk(QStringLiteral("partial"));
 
@@ -123,8 +125,10 @@ void TestChat::test_cancelResetsStreamingWithoutReply() {
     QCOMPARE(chat.messages().size(), std::size_t{1});
     QCOMPARE(kReplySpy.count(), 0);
     QCOMPARE(kFailedSpy.count(), 0);
+    QCOMPARE(kCancelledSpy.count(), 1);
     QCOMPARE(kStateSpy.count(), 1);
     QCOMPARE(kTextSpy.count(), 2);
+    QCOMPARE(answer->isCancelled(), true);
     QCOMPARE(answer->isCompleted(), false);
     QCOMPARE(answer->isFailed(), false);
 
@@ -150,7 +154,8 @@ void TestChat::test_failResetsStreamingAndEmitsFailed() {
     QCOMPARE(chat.messages().size(), std::size_t{1});
     QCOMPARE(kReplySpy.count(), 0);
     QCOMPARE(kFailedSpy.count(), 1);
-    QCOMPARE(kFailedSpy.at(0).at(0).toString(), QStringLiteral("offline"));
+    QCOMPARE(kFailedSpy.at(0).at(0).value<ProviderError>(), ProviderError::kNetwork);
+    QCOMPARE(kFailedSpy.at(0).at(1).toString(), QStringLiteral("offline"));
     QCOMPARE(kStateSpy.count(), 1);
     QCOMPARE(kTextSpy.count(), 2);
 }
@@ -220,6 +225,27 @@ void TestChat::test_emptyTextIsAccepted() {
     QCOMPARE(chat.messages().at(0).text(), QString());
     QCOMPARE(chat.isStreaming(), true);
     QCOMPARE(fake->respondCount(), 1);
+}
+
+void TestChat::test_providerDestroyingAnswerResetsStreaming() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    fake->lastAnswer()->appendChunk(QStringLiteral("partial"));
+    const QSignalSpy kStateSpy(&chat, &Chat::stateChanged);
+
+    fake->destroyLastAnswer();
+
+    QCOMPARE(chat.isStreaming(), false);
+    QCOMPARE(chat.streamingText(), QString());
+    QCOMPARE(chat.messages().size(), std::size_t{1});
+    QCOMPARE(kStateSpy.count(), 1);
+
+    // The chat stays usable after the provider disposed of its answer.
+    chat.send(QStringLiteral("again"));
+    QCOMPARE(chat.isStreaming(), true);
+    QCOMPARE(chat.messages().size(), std::size_t{2});
 }
 
 QTEST_GUILESS_MAIN(TestChat)

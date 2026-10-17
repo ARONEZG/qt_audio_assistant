@@ -16,9 +16,16 @@
 - Домен LLM-чата (первый C++-инкремент, `src/domain/`): неизменяемое значение
   `Message` (`MessageRole`), типизированная ошибка `ProviderError`, объект одного
   потокового ответа `Answer` (накопление текста, `complete`/`fail`/`cancel`,
-  сигналы `chunkReceived`/`completed`/`failed`), role-интерфейс `Provider`
+  запросы `isCompleted`/`isFailed`/`isCancelled`, сигналы
+  `chunkReceived`/`completed`/`failed`/`cancelled`), role-интерфейс `Provider`
   (`id`/`displayName`/`respond`) и `Chat` (провайдер через DI, append-only история
-  сообщений, «живой» ответ в `streamingText`, команды `send`/`cancel`).
+  сообщений, «живой» ответ в `streamingText`, команды `send`/`cancel`, типизированный
+  сигнал `failed(ProviderError, QString)` и сигнал `cancelled()`).
+- Владение потоковым `Answer` разделено явно: им владеет `Provider` (parent), а
+  `Chat` только наблюдает и очищает свой указатель по сигналу `destroyed()` (и
+  отключается в деструкторе), поэтому провайдер, удаливший `Answer`, не оставляет
+  висячий указатель — `Chat` сбрасывает состояние стриминга и остаётся
+  работоспособным.
 - Статическая библиотека `audio-assistant-domain` и модульные тесты
   `tst_message`, `tst_answer`, `tst_chat` с тестовым двойником `FakeProvider`
   (Qt Test + CTest, `QT_QPA_PLATFORM=offscreen`, детерминированно, без сети).
@@ -55,9 +62,17 @@
 - Профиль строгих предупреждений Clang вынесен в общую INTERFACE-цель
   `audio-assistant-strict`; `CMakeLists.txt` собирает домен отдельной целью
   `audio-assistant-domain` и линкует её в приложение и тесты (target-based).
+  Подавления `-Wno-padded` и `-Wno-unsafe-buffer-usage` вынесены в отдельную
+  INTERFACE-цель `audio-assistant-qt-warnings`, которую линкуют только домен и его
+  тесты (Qt value-типы дают tail-padding, а moc-диспетчеры индексируют массив
+  аргументов сигнала); остальные цели сохраняют полный `-Weverything`-профиль.
 - `tests/.clang-tidy` наследует корневой конфиг и смягчает только порог
   `readability-function-size`: макросы Qt Test (`QCOMPARE`/`QVERIFY`) раздувают
   счётчик statements, из-за чего обычные тестовые функции ложно не проходили.
+- Стадия Coverage в `scripts/ci-check.sh` отчитывается только по собственному коду
+  проекта: сторонний код, подтянутый в `_deps/` (LLMQore), и сгенерированные
+  Qt-файлы (`_autogen`, `.qt`, каталоги сборки) исключаются из обхода и из отчёта;
+  устаревшие профили перед прогоном удаляются, чтобы `llvm-cov` не зависал.
 - `AGENTS.md` реструктурирован: общие правила (~80 строк) в корне, специфичные
   для подсистем — во вложенных `src/AGENTS.md`, `qml/AGENTS.md`, `tests/AGENTS.md`
   (загружаются OpenCode V2 только при работе в соответствующей директории).

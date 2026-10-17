@@ -34,6 +34,7 @@ private slots:
     void test_appendChunkAfterFailIsIgnored();
     void test_completeAfterFailIsIgnored();
     void test_cancelStopsFurtherStreaming();
+    void test_cancelEmitsCancelledOnce();
     void test_cancelAfterCompleteIsIgnored();
     void test_failAfterCancelIsIgnored();
 };
@@ -47,6 +48,7 @@ void TestAnswer::test_initialState() {
     QCOMPARE(kAnswer.text(), QString());
     QCOMPARE(kAnswer.isCompleted(), false);
     QCOMPARE(kAnswer.isFailed(), false);
+    QCOMPARE(kAnswer.isCancelled(), false);
     QCOMPARE(kAnswer.error(), ProviderError::kUnknown);
     QCOMPARE(kAnswer.errorText(), QString());
 }
@@ -164,30 +166,48 @@ void TestAnswer::test_cancelStopsFurtherStreaming() {
 
     answer.cancel();
 
+    QCOMPARE(answer.isCancelled(), true);
     QCOMPARE(answer.isCompleted(), false);
     QCOMPARE(answer.isFailed(), false);
     QCOMPARE(answer.text(), QStringLiteral("partial"));
 
+    const QSignalSpy kCancelledSpy(&answer, &Answer::cancelled);
     const QSignalSpy kChunkSpy(&answer, &Answer::chunkReceived);
     const QSignalSpy kCompletedSpy(&answer, &Answer::completed);
     const QSignalSpy kFailedSpy(&answer, &Answer::failed);
+    answer.cancel();
     answer.appendChunk(QStringLiteral("late"));
     answer.complete(assistant(QStringLiteral("late")));
     answer.fail(ProviderError::kUnknown, QStringLiteral("late"));
 
+    QCOMPARE(kCancelledSpy.count(), 0);
     QCOMPARE(kChunkSpy.count(), 0);
     QCOMPARE(kCompletedSpy.count(), 0);
     QCOMPARE(kFailedSpy.count(), 0);
 }
 
+void TestAnswer::test_cancelEmitsCancelledOnce() {
+    Answer answer;
+    const QSignalSpy kSpy(&answer, &Answer::cancelled);
+
+    answer.cancel();
+
+    QCOMPARE(kSpy.count(), 1);
+    QCOMPARE(answer.isCancelled(), true);
+    QCOMPARE(answer.isCompleted(), false);
+    QCOMPARE(answer.isFailed(), false);
+}
+
 void TestAnswer::test_cancelAfterCompleteIsIgnored() {
     Answer answer;
     answer.complete(assistant(QStringLiteral("done")));
+    const QSignalSpy kSpy(&answer, &Answer::cancelled);
 
     answer.cancel();
 
     QCOMPARE(answer.isCompleted(), true);
-    QCOMPARE(answer.isFailed(), false);
+    QCOMPARE(answer.isCancelled(), false);
+    QCOMPARE(kSpy.count(), 0);
 }
 
 void TestAnswer::test_failAfterCancelIsIgnored() {

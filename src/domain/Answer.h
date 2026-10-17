@@ -24,14 +24,20 @@ public:
 
     // Commands. The first terminal command wins; later ones are no-ops.
     void appendChunk(const QString& chunk);
+    // Freezes the finished reply and emits completed(). The provider supplies
+    // the frozen message; its role is Assistant and its text is expected to
+    // equal the accumulated text() (the Answer does not re-derive it).
     void complete(const Message& message);
     void fail(ProviderError error, const QString& detail);
+    // Abandons the answer and emits cancelled(). Observable so a consumer can
+    // tell "cancelled" apart from "still streaming".
     void cancel();
 
     // Queries.
     [[nodiscard]] QString text() const;
     [[nodiscard]] bool isCompleted() const noexcept;
     [[nodiscard]] bool isFailed() const noexcept;
+    [[nodiscard]] bool isCancelled() const noexcept;
     [[nodiscard]] ProviderError error() const noexcept;
     [[nodiscard]] QString errorText() const;
 
@@ -39,6 +45,7 @@ signals:
     void chunkReceived(const QString& chunk);
     void completed(const Message& message);
     void failed(ProviderError error, const QString& detail);
+    void cancelled();
 
 private:
     enum class State : std::uint8_t {

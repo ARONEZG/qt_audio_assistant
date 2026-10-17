@@ -3,9 +3,16 @@
 #include <utility>
 
 Chat::Chat(std::unique_ptr<Provider> provider, QObject* parent) : QObject(parent), provider_(std::move(provider)) {
+    Q_ASSERT(provider_ != nullptr);
 }
 
-Chat::~Chat() = default;
+Chat::~Chat() {
+    // Disconnect before the provider (and thus its Answer) is destroyed below:
+    // a callback into a half-destroyed Chat from onAnswerDestroyed is unsafe.
+    if (currentAnswer_ != nullptr) {
+        disconnect(currentAnswer_, nullptr, this, nullptr);
+    }
+}
 
 const std::vector<Message>& Chat::messages() const noexcept {
     return messages_;
@@ -39,20 +46,23 @@ void Chat::cancel() {
     if (!isStreaming_) {
         return;
     }
-    Answer* answer = currentAnswer_;
-    stopStreaming();
-    if (answer != nullptr) {
-        // Detached already: its signals no longer reach this Chat.
-        answer->cancel();
+    if (currentAnswer_ != nullptr) {
+        // Answer::cancel() emits cancelled(); onAnswerCancelled() resets state.
+        currentAnswer_->cancel();
+    } else {
+        stopStreaming();
     }
 }
 
 void Chat::startStreaming() {
     Answer* answer = provider_->respond(messages_);
+    Q_ASSERT(answer != nullptr);
     currentAnswer_ = answer;
     connect(answer, &Answer::chunkReceived, this, &Chat::onChunkReceived);
     connect(answer, &Answer::completed, this, &Chat::onAnswerCompleted);
     connect(answer, &Answer::failed, this, &Chat::onAnswerFailed);
+    connect(answer, &Answer::cancelled, this, &Chat::onAnswerCancelled);
+    connect(answer, &QObject::destroyed, this, &Chat::onAnswerDestroyed);
     setStreaming(true);
 }
 
@@ -93,7 +103,19 @@ void Chat::onAnswerCompleted(const Message& message) {
 
 void Chat::onAnswerFailed(ProviderError error, const QString& detail) {
     stopStreaming();
-    if (error != ProviderError::kCancelled) {
-        emit failed(detail);
-    }
+    emit failed(error, detail);
+}
+
+void Chat::onAnswerCancelled() {
+    stopStreaming();
+    emit cancelled();
+}
+
+void Chat::onAnswerDestroyed() {
+    // The provider destroyed its Answer without a terminal signal. The bare
+    // observing pointer is cleared here, synchronously with destruction, so it
+    // can never dangle.
+    currentAnswer_ = nullptr;
+    setStreamingText(QString());
+    setStreaming(false);
 }

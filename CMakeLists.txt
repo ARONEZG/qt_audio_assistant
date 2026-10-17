@@ -125,16 +125,24 @@ target_compile_options(audio-assistant-strict INTERFACE
     -Wno-c++98-compat-pedantic
     -Wno-c++20-compat
     -Wno-unknown-warning-option
+    -Wconversion -Wsign-conversion -Wimplicit-fallthrough
+    -Wcast-align -Wcast-qual -Wdouble-promotion -Wformat=2
+    -Wnull-dereference -Woverloaded-virtual -Wshadow-all
+    -Wswitch-enum -Wundef -Wunreachable-code -Wunused
+)
+
+# Qt/QObject-specific suppressions, scoped to the targets that actually pull in
+# Qt value types and moc-generated signal dispatchers (the domain library and
+# its tests) instead of being applied to every project target.
+add_library(audio-assistant-qt-warnings INTERFACE)
+
+target_compile_options(audio-assistant-qt-warnings INTERFACE
     # Qt value types are pointer-aligned, so domain value objects carry internal
     # tail padding; the struct layout is not a public ABI contract here.
     -Wno-padded
     # moc-generated dispatchers index the signal-argument array directly; this
     # pattern lives only in generated code and cannot be rewritten by hand.
     -Wno-unsafe-buffer-usage
-    -Wconversion -Wsign-conversion -Wimplicit-fallthrough
-    -Wcast-align -Wcast-qual -Wdouble-promotion -Wformat=2
-    -Wnull-dereference -Woverloaded-virtual -Wshadow-all
-    -Wswitch-enum -Wundef -Wunreachable-code -Wunused
 )
 
 # ── LLMQore (LLM client library) ────────────────────────────
@@ -175,7 +183,7 @@ target_include_directories(audio-assistant-domain PUBLIC
 
 target_link_libraries(audio-assistant-domain
     PUBLIC Qt6::Core
-    PRIVATE audio-assistant-strict
+    PRIVATE audio-assistant-strict audio-assistant-qt-warnings
 )
 
 # ── QML module ──────────────────────────────────────────────
@@ -232,6 +240,7 @@ function(audio_assistant_add_domain_test target)
 
     target_link_libraries(${target} PRIVATE
         audio-assistant-strict
+        audio-assistant-qt-warnings
         audio-assistant-domain
         Qt6::Core
         Qt6::Test

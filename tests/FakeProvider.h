@@ -27,6 +27,10 @@ public:
     [[nodiscard]] const std::vector<Message>& lastHistory() const noexcept;
     [[nodiscard]] int respondCount() const noexcept;
 
+    // Simulates a provider that owns and disposes of its Answer (e.g. after a
+    // terminal signal). Used to prove Chat survives provider-side destruction.
+    void destroyLastAnswer();
+
 private:
     Answer* lastAnswer_ = nullptr;
     std::vector<Message> lastHistory_;

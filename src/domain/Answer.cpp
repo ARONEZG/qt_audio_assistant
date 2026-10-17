@@ -40,6 +40,7 @@ void Answer::cancel() {
         return;
     }
     state_ = State::kCancelled;
+    emit cancelled();
 }
 
 QString Answer::text() const {
@@ -52,6 +53,10 @@ bool Answer::isCompleted() const noexcept {
 
 bool Answer::isFailed() const noexcept {
     return state_ == State::kFailed;
+}
+
+bool Answer::isCancelled() const noexcept {
+    return state_ == State::kCancelled;
 }
 
 ProviderError Answer::error() const noexcept {

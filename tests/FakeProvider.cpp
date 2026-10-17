@@ -31,3 +31,8 @@ const std::vector<Message>& FakeProvider::lastHistory() const noexcept {
 int FakeProvider::respondCount() const noexcept {
     return respondCount_;
 }
+
+void FakeProvider::destroyLastAnswer() {
+    delete lastAnswer_;
+    lastAnswer_ = nullptr;
+}
