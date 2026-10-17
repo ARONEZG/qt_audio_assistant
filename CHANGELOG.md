@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Окно приложения больше не зависает невидимым: добавлено свойство `visible: true` в `ApplicationWindow` (`qml/Main.qml`). Ранее окно создавалось, но не отображалось.
+
 ### Added
 
 - CI pipeline: GitHub Actions workflow (`.github/workflows/ci.yml`), локальный скрипт
