@@ -13,6 +13,12 @@
 
 ### Added
 
+- Короткий блок критических правил для AI-агента (`docs/AGENTS_CRITICAL.md`),
+  подключаемый через `opencode.json` (`instructions`), чтобы правила изоляции и
+  доставки (ветка → push → PR) не терялись в длинных сессиях.
+- Git-hook'и `.githooks/pre-commit` и `.githooks/pre-push` + `scripts/setup-git-hooks.sh`:
+  блокируют прямые коммиты и пуши в `main`/`master`, принуждая к изоляции в ветках;
+  `.githooks/pre-commit` также делегирует quality-проверки в pre-commit framework.
 - CI pipeline: GitHub Actions workflow (`.github/workflows/ci.yml`), локальный скрипт
   `scripts/ci-check.sh`, pre-commit hooks (`.pre-commit-config.yaml`), конфигурация `act`
   для локального прогона GitHub Actions.
@@ -44,3 +50,6 @@
 - Обновлён `docs/STATIC_ANALYSIS_TOOLS.md`: состояние инструментов в окружении.
 - Правила Git workflow: авто-push + auto-PR для значимых изменений, CI/CD gate для
   мержа, изоляция изменений (`AGENTS.md` §6, `docs/BRANCHING.md`).
+- Git-hook'и доработаны: устранён конфликт с pre-commit framework (quality-проверки
+  делегируются из `.githooks/pre-commit`, `pre-commit install` в репозитории не
+  используется) и блокируется root-коммит в unborn `main` (`git symbolic-ref`).
