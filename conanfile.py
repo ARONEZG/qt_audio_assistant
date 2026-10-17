@@ -1,15 +1,16 @@
 """Conan recipe for the Audio Assistant project.
 
-Qt 6.4.2 is the primary dependency target. The Conan requirement is currently
-disabled (see ``requires`` below): on Linux, Qt is taken from the system
-(apt/libqt6*-dev) because ConanCenter lacks pre-built binaries for
-Linux/Clang. Uncomment ``requires`` once pre-built binaries are available,
-or for Windows/macOS builds.
+The Qt 6.4.2 requirement is currently disabled (see ``requires`` below): on
+Linux, Qt is taken from the system (apt/libqt6*-dev) because ConanCenter lacks
+pre-built binaries for Linux/Clang. Uncomment it once pre-built binaries are
+available, or for Windows/macOS builds.
+
+spdlog is the managed runtime dependency (logging).
 
 Usage (from the project root, Linux with Clang 18 and Ninja):
 
-    # 1. Install build dependencies using the in-repo profile
-    #    (profiles/clang18; currently only build-time tooling, no packages)
+    # 1. Install dependencies using the in-repo profile
+    #    (profiles/clang18; spdlog is fetched from ConanCenter)
     conan install . -of build/conan --build=missing -pr profiles/clang18
 
     # 2. Configure CMake with the Conan-generated toolchain.
@@ -70,9 +71,9 @@ class AudioAssistantConan(ConanFile):
     #     "qt/*:with_doubleconversion": True,
     #     "qt/*:with_dbus": True,
     # }
-    # Currently no managed runtime dependencies; Conan only generates the
-    # CMake toolchain/build files (build-time tooling).
-    requires = ()
+    # Managed runtime dependency: spdlog (logging). Qt is taken from the system
+    # on Linux (see note above); add "qt/6.4.2" here for Windows/macOS builds.
+    requires = "spdlog/1.14.1"
 
     def layout(self):
         cmake_layout(self)

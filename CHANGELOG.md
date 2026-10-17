@@ -13,6 +13,16 @@
 
 ### Added
 
+- Логирование через spdlog: мост Qt → spdlog `LogBridge` (`src/logging/LogBridge.hpp`,
+  `src/logging/LogBridge.cpp`). При создании устанавливается цветной консольный логгер
+  и Qt-обработчик сообщений (`qInstallMessageHandler`), при разрушении — предыдущие
+  обработчик и логгер восстанавливаются. `qDebug/qInfo/qWarning/qCritical` маппятся на
+  уровни spdlog, `qFatal` логируется и завершает процесс. Подключено в `src/main.cpp`.
+- Зависимость `spdlog/1.14.1` в `conanfile.py`; поиск и линковка `spdlog::spdlog`
+  (`CMakeLists.txt`);
+  в CI и локальных проверках используется системный `libspdlog-dev`.
+- Тесты моста логирования (`tests/tst_logging.cpp`): маршрутизация сообщений,
+  фильтрация по уровню, восстановление Qt-обработчика и логгера spdlog.
 - CI pipeline: GitHub Actions workflow (`.github/workflows/ci.yml`), локальный скрипт
   `scripts/ci-check.sh`, pre-commit hooks (`.pre-commit-config.yaml`), конфигурация `act`
   для локального прогона GitHub Actions.
