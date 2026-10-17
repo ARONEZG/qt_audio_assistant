@@ -21,9 +21,10 @@ Usage (from the project root, Linux with Clang 18 and Ninja):
         --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
 
     # 1. Install build dependencies using the in-repo profile
-    #    (profiles/clang18; spdlog is fetched from ConanCenter)
-    conan install . -of build/conan --build=missing -pr profiles/clang18
-    conan install . -of build/conan --build=missing -pr profiles/clang18
+    #    (profiles/clang18; spdlog is fetched from ConanCenter). The profile is
+    #    passed for both contexts so no machine-global default profile is needed:
+    conan install . -of build/conan --build=missing \
+        -pr:b profiles/clang18 -pr profiles/clang18
 
     # 2. Configure CMake with the Conan-generated toolchain.
     #    The toolchain is included after project(), so the compiler must be

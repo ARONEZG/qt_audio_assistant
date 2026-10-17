@@ -140,7 +140,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Conan install (spdlog)
-        run: conan install . -of build/conan --build=missing -pr profiles/clang18
+        run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
       - name: Setup ccache
         uses: actions/cache@v4
@@ -219,7 +219,8 @@ jobs:
       - name: Conan install (spdlog)
         run: |
           conan install . -of build/conan --build=missing \
-            -pr profiles/clang18 -s build_type=Release
+            -pr:b profiles/clang18 -pr profiles/clang18 \
+            -s:b build_type=Release -s build_type=Release
 
       - name: Configure (Release)
         run: |
@@ -289,7 +290,7 @@ jobs:
       # The compile_commands.json from the Debug job points at spdlog headers
       # inside the Conan cache; install the same Debug packages to restore them.
       - name: Conan install (spdlog)
-        run: conan install . -of build/conan --build=missing -pr profiles/clang18
+        run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
       - name: clang-tidy
         run: |
@@ -371,7 +372,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Conan install (spdlog)
-        run: conan install . -of build/conan --build=missing -pr profiles/clang18
+        run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
       - name: Configure (ASan + UBSan)
         run: |
@@ -437,7 +438,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Conan install (spdlog)
-        run: conan install . -of build/conan --build=missing -pr profiles/clang18
+        run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
       - name: Configure (coverage)
         run: |

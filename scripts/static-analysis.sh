@@ -273,7 +273,8 @@ ensure_compile_commands() {
     fi
     info "Conan install (Debug)"
     conan install "$PROJECT_ROOT" -of "$conan_dir" --build=missing \
-        -pr "$PROJECT_ROOT/profiles/clang18" -s build_type=Debug 2>&1 | tail -3 || {
+        -pr:b "$PROJECT_ROOT/profiles/clang18" -pr "$PROJECT_ROOT/profiles/clang18" \
+        -s:b build_type=Debug -s build_type=Debug 2>&1 | tail -3 || {
         fail "conan install failed"
         return 1
     }
@@ -397,7 +398,8 @@ step_scan_build() {
 
     info "Conan install (Debug)"
     conan install "$PROJECT_ROOT" -of "$conan_dir" --build=missing \
-        -pr "$PROJECT_ROOT/profiles/clang18" -s build_type=Debug 2>&1 | tail -3 || {
+        -pr:b "$PROJECT_ROOT/profiles/clang18" -pr "$PROJECT_ROOT/profiles/clang18" \
+        -s:b build_type=Debug -s build_type=Debug 2>&1 | tail -3 || {
         warn "scan-build: conan install failed — skipping"
         return 0
     }

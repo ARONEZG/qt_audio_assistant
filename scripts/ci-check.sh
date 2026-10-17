@@ -62,8 +62,10 @@ CONAN_BUILD_DIR="$PROJECT_ROOT/build/conan"
 
 # spdlog is a managed Conan dependency (conanfile.py) and CMake pins
 # find_package(spdlog 1.14 REQUIRED), so every CMake configure must be preceded
-# by `conan install` and receive -DCONAN_BUILD_DIR. The build type is matched so
-# Release links a Release-built spdlog, not the Debug one.
+# by `conan install` and receive -DCONAN_BUILD_DIR. The in-repo profile is passed
+# for both the build and host contexts so no machine-global default profile is
+# required; the build type is matched so Release links a Release-built spdlog,
+# not the Debug one.
 conan_install() {
     local build_type="$1"
     if ! command -v conan &>/dev/null; then
@@ -72,7 +74,8 @@ conan_install() {
     fi
     info "Conan install ($build_type)"
     conan install "$PROJECT_ROOT" -of "$CONAN_BUILD_DIR" --build=missing \
-        -pr "$PROJECT_ROOT/profiles/clang18" -s build_type="$build_type" 2>&1 | tail -3 || {
+        -pr:b "$PROJECT_ROOT/profiles/clang18" -pr "$PROJECT_ROOT/profiles/clang18" \
+        -s:b build_type="$build_type" -s build_type="$build_type" 2>&1 | tail -3 || {
         fail "conan install failed"
         return 1
     }

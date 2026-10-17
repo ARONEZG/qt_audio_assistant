@@ -70,7 +70,8 @@ Conan 2.x управляет зависимостью логирования: `s
 
 ```bash
 # Профиль зафиксирован в репозитории: profiles/clang18 (Linux x86_64, Clang 18, Debug)
-conan install . -of build/conan --build=missing -pr profiles/clang18
+conan install . -of build/conan --build=missing \
+    -pr:b profiles/clang18 -pr profiles/clang18
 
 CC=clang-18 CXX=clang++-18 cmake -S . -B build \
     -DCONAN_BUILD_DIR=build/conan \
