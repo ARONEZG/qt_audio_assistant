@@ -16,8 +16,10 @@
 - **spdlog** 1.14+ — зависимость логирования, управляется через Conan
   (`spdlog/1.14.1` в `conanfile.py`). Системный `libspdlog-dev` в Ubuntu 24.04
   (spdlog 1.12) не подходит: CMake требует `find_package(spdlog 1.14 REQUIRED)`.
-- **Git** 2.x — обязателен: CMake подтягивает библиотеку **LLMQore v0.8.0**
-  (MIT) через `FetchContent` на этапе конфигурации, поэтому нужен доступ к `github.com`
+- **Conan** 2.x — обязателен: через него подтягиваются `spdlog` и **LLMQore v0.8.0**
+  (MIT). LLMQore нет в ConanCenter, поэтому он собирается из in-repo рецепта
+  `recipes/llmqore`, который скачивает исходники с `github.com` (доступ к сети нужен
+  на этапе `conan install`, а не конфигурации CMake).
 
 ### Установка Qt 6.8.3 (aqtinstall, без sudo)
 
@@ -54,22 +56,21 @@ cmake --build build --parallel
 ```
 
 Путь к Qt задаётся только на этапе конфигурации через `CMAKE_PREFIX_PATH`;
-в `CMakeLists.txt` он не зашит. При первой конфигурации CMake скачает
-LLMQore v0.8.0 (см. `FetchContent_Declare` в `CMakeLists.txt`).
+в `CMakeLists.txt` он не зашит.
 
 Проект требует Clang; конфигурация завершится ошибкой с другим компилятором.
-Сборка без Conan работает только при наличии системного spdlog 1.14+; зависимость
-логирования рекомендуется ставить через Conan (см. ниже).
+Все зависимости (`spdlog`, LLMQore) поставляются через Conan (см. ниже).
 
 ## Сборка с Conan (рекомендуемый способ)
 
-Conan 2.x управляет зависимостью логирования: `spdlog/1.14.1` берётся из ConanCenter
-(см. `conanfile.py`). Qt ставится отдельно через `aqtinstall` и находится по
-`CMAKE_PREFIX_PATH` (зависимость Qt через ConanCenter пока отключена). Требуется
-`conan` 2.x в `PATH`.
+Conan 2.x управляет зависимостями: `spdlog/1.14.1` берётся из ConanCenter,
+`llmqore/0.8.0` собирается из in-repo рецепта `recipes/llmqore` (см. `conanfile.py`).
+Qt ставится отдельно через `aqtinstall` и находится по `CMAKE_PREFIX_PATH`
+(зависимость Qt через ConanCenter пока отключена). Требуется `conan` 2.x в `PATH`.
 
 ```bash
 # Профиль зафиксирован в репозитории: profiles/clang18 (Linux x86_64, Clang 18, Debug)
+conan export recipes/llmqore
 conan install . -of build/conan --build=missing \
     -pr:b profiles/clang18 -pr profiles/clang18
 
@@ -83,6 +84,8 @@ cmake --build build --parallel
 
 Компилятор всё равно задаётся явно через `CC`/`CXX`: Conan toolchain подключается
 через `include()` уже после `project()`, поэтому он не управляет выбором компилятора.
+Пакеты, собираемые Conan (`llmqore`), компилируются Clang-ом — это задаёт conf
+`tools.build:compiler_executables` в `profiles/clang18`.
 
 ## Тесты
 
@@ -100,8 +103,9 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
 
 - **Linux (Ubuntu 24.04, x86_64)**: проверено полностью — Debug/Release, ASan+UBSan,
   clang-format, clang-tidy, Qt Test. Qt 6.8.3 установлен через `aqtinstall`
-  в `~/Qt/6.8.3/gcc_64`; LLMQore v0.8.0 подключается через `FetchContent` и
-  линкуется в исполняемый файл (без использования API). Отдельной графической сессии
+  в `~/Qt/6.8.3/gcc_64`; LLMQore v0.8.0 подключается через Conan
+  (`recipes/llmqore`) и линкуется в исполняемый файл (без использования API).
+  Отдельной графической сессии
   во время проверки не было; GUI запускался только с `QT_QPA_PLATFORM=offscreen`.
   Сборка через Conan проверена только на Linux/Ninja; конфигурация с другими генераторами
   (Visual Studio, Xcode) обрабатывается defensively, но не проверялась.

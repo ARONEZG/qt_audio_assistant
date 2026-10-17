@@ -99,17 +99,21 @@ find_clangpp() {
     echo ""
 }
 
-# ── Conan / spdlog dependency ───────────────────────────────
+# ── Conan dependencies (spdlog, llmqore) ────────────────────
 
 CONAN_BUILD_DIR="$PROJECT_ROOT/build/conan"
+CONAN_LLMQORE_RECIPE="$PROJECT_ROOT/recipes/llmqore"
 _CONAN_INSTALLED=""
 
-# spdlog is a managed Conan dependency (conanfile.py) and CMake pins
-# find_package(spdlog 1.14 REQUIRED), so every CMake configure must be preceded
-# by `conan install` and receive -DCONAN_BUILD_DIR. The in-repo profile is passed
-# for both the build and host contexts so no machine-global default profile is
-# required; the build type is matched so Release links a Release-built spdlog,
-# not the Debug one.
+# spdlog and LLMQore are managed Conan dependencies (conanfile.py) and CMake
+# pins find_package(spdlog 1.14 REQUIRED) / find_package(LLMQore REQUIRED), so
+# every CMake configure must be preceded by `conan install` and receive
+# -DCONAN_BUILD_DIR. spdlog comes from ConanCenter; llmqore is built from the
+# in-repo recipe, which has to be exported into the cache first.
+#
+# The in-repo profile is passed for both the build and host contexts so no
+# machine-global default profile is required; the build type is matched so
+# Release links Release-built packages, not the Debug ones.
 #
 # The same build_type is requested several times per full run (Debug for the
 # debug, ASan and coverage trees); it is installed once per build_type.
@@ -122,9 +126,14 @@ conan_install() {
             ;;
     esac
     if ! command -v conan &>/dev/null; then
-        fail "conan not found in PATH (required for the spdlog dependency)"
+        fail "conan not found in PATH (required for the spdlog/llmqore dependencies)"
         return 1
     fi
+    info "Conan export recipes/llmqore"
+    conan export "$CONAN_LLMQORE_RECIPE" 2>&1 | tail -2 || {
+        fail "conan export (llmqore recipe) failed"
+        return 1
+    }
     info "Conan install ($build_type)"
     conan install "$PROJECT_ROOT" -of "$CONAN_BUILD_DIR" --build=missing \
         -pr:b "$PROJECT_ROOT/profiles/clang18" -pr "$PROJECT_ROOT/profiles/clang18" \
@@ -354,9 +363,10 @@ step_coverage() {
         return 0
     }
 
-    # Report coverage for project-owned binaries only. Third-party code fetched
-    # into _deps/ (LLMQore) and Qt build helpers under .qt/ are not instrumented
-    # for coverage and must never be scanned.
+    # Report coverage for project-owned binaries only. Conan-provided
+    # third-party code (spdlog, LLMQore) lives outside the build tree, and Qt
+    # build helpers under .qt/ are not instrumented for coverage and must never
+    # be scanned.
     local objects
     objects=$(find . -type d \( -name '_deps' -o -name '.qt' -o -name '*_autogen' \) -prune -o \
         -type f \( -name 'audio-assistant' -o -name 'tst_*' -o -name '*.so' \) -print)

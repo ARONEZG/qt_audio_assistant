@@ -7,6 +7,17 @@
 
 ## [Unreleased]
 
+### Changed
+
+- LLMQore больше не подтягивается через `FetchContent` в `CMakeLists.txt`: библиотека
+  поставляется Conan-пакетом `llmqore/0.8.0` из in-repo рецепта `recipes/llmqore`
+  (пин на upstream-тег `v0.8.0`). Conan стал обязательным для сборки, а загрузка
+  исходников с `github.com` переехала с этапа конфигурации CMake на этап
+  `conan install`; зависимости линкуются через `find_package(LLMQore)`.
+- Профиль `profiles/clang18` теперь явно задаёт `tools.build:compiler_executables`
+  (`clang-18` / `clang++-18`), чтобы пакеты, которые собирает Conan (llmqore, spdlog),
+  действительно компилировались Clang, а не системным компилятором по умолчанию.
+
 ### Fixed
 
 - Окно приложения больше не зависает невидимым: добавлено свойство `visible: true` в `ApplicationWindow` (`qml/Main.qml`). Ранее окно создавалось, но не отображалось.
