@@ -57,6 +57,20 @@ QtMessageHandler currentHandler() {
     return handler;
 }
 
+/// True if installing a bridge swaps the active Qt message handler. The bridge
+/// is scoped to the call so it is destroyed (and the handler restored) before
+/// the caller re-checks the handler.
+bool qtHandlerChanged(QtMessageHandler original) {
+    audio_assistant::log::LogBridge bridge;  // NOLINT(misc-const-correctness)
+    return currentHandler() != original;
+}
+
+/// True if installing a bridge swaps the spdlog default logger.
+bool defaultLoggerChanged(const std::shared_ptr<spdlog::logger>& original) {
+    audio_assistant::log::LogBridge bridge;  // NOLINT(misc-const-correctness)
+    return spdlog::default_logger() != original;
+}
+
 /// Outcome of running the test binary in `--fatal-child` mode.
 struct FatalChildResult {
     QByteArray output;
@@ -149,22 +163,14 @@ void TestLogging::test_filtersMessagesBelowLevel() {
 void TestLogging::test_restoresQtHandler() {
     const QtMessageHandler kOriginalHandler = currentHandler();
 
-    {
-        audio_assistant::log::LogBridge bridge;  // NOLINT(misc-const-correctness)
-        QVERIFY(currentHandler() != kOriginalHandler);
-    }
-
+    QVERIFY(qtHandlerChanged(kOriginalHandler));
     QVERIFY(currentHandler() == kOriginalHandler);
 }
 
 void TestLogging::test_restoresDefaultLogger() {
     const auto kOriginalLogger = spdlog::default_logger();
 
-    {
-        audio_assistant::log::LogBridge bridge;  // NOLINT(misc-const-correctness)
-        QVERIFY(spdlog::default_logger() != kOriginalLogger);
-    }
-
+    QVERIFY(defaultLoggerChanged(kOriginalLogger));
     QVERIFY(spdlog::default_logger() == kOriginalLogger);
 }
 
@@ -172,8 +178,14 @@ void TestLogging::test_fatalAbortsProcess() {
     // qFatal() terminates the process, so it cannot be observed in-process; the
     // test binary re-invokes itself as a child and asserts on the outcome.
     const FatalChildResult kResult = runFatalChild();
-    QVERIFY2(kResult.output.contains("fatal_routed"), kResult.output.constData());
-    QVERIFY2(kResult.terminated, "qFatal must terminate the process");
+
+    // Surface the child output on failure to make the diagnosis possible
+    // (Qt Test's QVERIFY does not print it).
+    if (!kResult.output.contains("fatal_routed")) {
+        qWarning() << "fatal child output:" << kResult.output;
+    }
+    QVERIFY(kResult.output.contains("fatal_routed"));
+    QVERIFY(kResult.terminated);
 }
 
 int main(int argc, char* argv[]) {

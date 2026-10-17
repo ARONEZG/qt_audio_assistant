@@ -8,24 +8,29 @@
 
 - Компилятор **Clang** 18+ (проверено с LLVM 18.1.3)
 - **CMake** 3.26+
-- **Qt 6** (проверено с Qt 6.4.2):
-  - dev-пакеты: `qt6-base-dev`, `qt6-declarative-dev`
-  - QML-модули: `qml6-module-qtquick`, `qml6-module-qtquick-controls`,
-    `qml6-module-qtquick-layouts`, `qml6-module-qtquick-templates`,
-    `qml6-module-qtquick-window`
+- **Qt 6.8.3** — минимальная и проверенная версия. Qt ставится per-user через
+  `aqtinstall` в `~/Qt`; dev-пакеты дистрибутива (`qt6-base-dev`, `qt6-declarative-dev`)
+  больше не используются: в Ubuntu 24.04 они дают Qt 6.4.2, чего недостаточно.
+  - нужны архивы `qtbase` и `qtdeclarative` (в Qt 6 Qt Quick Controls 2 входит
+    в `qtdeclarative`, отдельного архива `qtquickcontrols2` нет)
 - **spdlog** 1.14+ — зависимость логирования, управляется через Conan
   (`spdlog/1.14.1` в `conanfile.py`). Системный `libspdlog-dev` в Ubuntu 24.04
   (spdlog 1.12) не подходит: CMake требует `find_package(spdlog 1.14 REQUIRED)`.
-- **Git** 2.x (опционально)
+- **Git** 2.x — обязателен: CMake подтягивает библиотеку **LLMQore v0.8.0**
+  (MIT) через `FetchContent` на этапе конфигурации, поэтому нужен доступ к `github.com`
 
-### Ubuntu / Debian
+### Установка Qt 6.8.3 (aqtinstall, без sudo)
 
 ```bash
-sudo apt install clang cmake ninja-build git \
-    qt6-base-dev qt6-declarative-dev \
-    qml6-module-qtquick qml6-module-qtquick-controls \
-    qml6-module-qtquick-layouts qml6-module-qtquick-templates \
-    qml6-module-qtquick-window
+pipx install aqtinstall   # или: python3 -m pip install --user aqtinstall
+aqt install-qt linux desktop 6.8.3 linux_gcc_64 -O ~/Qt \
+    --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
+```
+
+### Системные пакеты (Ubuntu / Debian)
+
+```bash
+sudo apt install clang cmake ninja-build git
 ```
 
 ## Сборка
@@ -33,16 +38,24 @@ sudo apt install clang cmake ninja-build git \
 Ninja — предпочтительный генератор (если установлен):
 
 ```bash
-CC=clang-18 CXX=clang++-18 cmake -S . -B build -G Ninja
+export CMAKE_PREFIX_PATH=$HOME/Qt/6.8.3/gcc_64
+CC=clang-18 CXX=clang++-18 cmake -S . -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"
 cmake --build build --parallel
 ```
 
 Если Ninja недоступен, используйте генератор по умолчанию (Unix Makefiles):
 
 ```bash
-CC=clang-18 CXX=clang++-18 cmake -S . -B build
+CC=clang-18 CXX=clang++-18 cmake -S . -B build \
+    -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"
 cmake --build build --parallel
 ```
+
+Путь к Qt задаётся только на этапе конфигурации через `CMAKE_PREFIX_PATH`;
+в `CMakeLists.txt` он не зашит. При первой конфигурации CMake скачает
+LLMQore v0.8.0 (см. `FetchContent_Declare` в `CMakeLists.txt`).
 
 Проект требует Clang; конфигурация завершится ошибкой с другим компилятором.
 Сборка без Conan работает только при наличии системного spdlog 1.14+; зависимость
@@ -51,8 +64,9 @@ cmake --build build --parallel
 ## Сборка с Conan (рекомендуемый способ)
 
 Conan 2.x управляет зависимостью логирования: `spdlog/1.14.1` берётся из ConanCenter
-(см. `conanfile.py`). Qt на Linux — из системы (зависимость Qt через ConanCenter пока
-отключена). Требуется `conan` 2.x в `PATH`.
+(см. `conanfile.py`). Qt ставится отдельно через `aqtinstall` и находится по
+`CMAKE_PREFIX_PATH` (зависимость Qt через ConanCenter пока отключена). Требуется
+`conan` 2.x в `PATH`.
 
 ```bash
 # Профиль зафиксирован в репозитории: profiles/clang18 (Linux x86_64, Clang 18, Debug)
@@ -61,6 +75,7 @@ conan install . -of build/conan --build=missing -pr profiles/clang18
 CC=clang-18 CXX=clang++-18 cmake -S . -B build \
     -DCONAN_BUILD_DIR=build/conan \
     -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_PREFIX_PATH=$HOME/Qt/6.8.3/gcc_64 \
     -G Ninja
 cmake --build build --parallel
 ```
@@ -83,8 +98,10 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
 ## Проверенные окружения
 
 - **Linux (Ubuntu 24.04, x86_64)**: проверено полностью — Debug/Release, ASan+UBSan,
-  clang-format, clang-tidy, Qt Test. Отдельной графической сессии во время проверки не было;
-  GUI запускался только с `QT_QPA_PLATFORM=offscreen`.
+  clang-format, clang-tidy, Qt Test. Qt 6.8.3 установлен через `aqtinstall`
+  в `~/Qt/6.8.3/gcc_64`; LLMQore v0.8.0 подключается через `FetchContent` и
+  линкуется в исполняемый файл (без использования API). Отдельной графической сессии
+  во время проверки не было; GUI запускался только с `QT_QPA_PLATFORM=offscreen`.
   Сборка через Conan проверена только на Linux/Ninja; конфигурация с другими генераторами
   (Visual Studio, Xcode) обрабатывается defensively, но не проверялась.
 - **Windows**: не проверено.

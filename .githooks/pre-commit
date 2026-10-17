@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Guard: запрещает прямые коммиты в main/master, затем делегирует
+# quality-проверки в pre-commit framework (.pre-commit-config.yaml).
+# Активация: scripts/setup-git-hooks.sh
+# Обход (только в исключительном случае): git commit --no-verify
+set -euo pipefail
+
+branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+
+case "$branch" in
+  main|master)
+    echo "error: прямые коммиты в '$branch' запрещены." >&2
+    echo "       Создайте ветку (feature/..., fix/..., chore/...) и откройте PR." >&2
+    echo "       Обход (исключение): git commit --no-verify" >&2
+    exit 1
+    ;;
+esac
+
+if command -v pre-commit >/dev/null 2>&1; then
+  exec pre-commit run
+fi
+exit 0
