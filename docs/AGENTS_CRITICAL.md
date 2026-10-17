@@ -6,8 +6,9 @@
 
 ## Изоляция
 
-- Каждое значимое изменение — в отдельной ветке от актуальной `main`
-  (`feature/...`, `fix/...`, `chore/...`).
+- Каждое значимое изменение — в отдельной **git-worktree** от актуальной `main`
+  (`feature/...`, `fix/...`, `chore/...`), а не переключением веток в основном чекауте.
+  Создание/удаление: `scripts/new-worktree.sh` / `scripts/rm-worktree.sh`.
 - Прямые коммиты и пуши в `main`/`master` запрещены и блокируются git-hook'ами:
   `.githooks/pre-commit` (guard + quality-проверки pre-commit framework) и
   `.githooks/pre-push` (guard пуша). Активация — `scripts/setup-git-hooks.sh`.
