@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QtQml/qqmlregistration.h>
+
 #include <QAbstractListModel>
 #include <QByteArray>
 #include <QHash>
@@ -17,9 +19,17 @@
 // static state. Its two jobs are "which providers exist" and "give me a fresh
 // one of these" - the latter is what lets Chats::add() take exclusive ownership
 // of a provider it did not have to know how to build.
+//
+// The list is composed in main() from configuration and injected into the view,
+// so the QML type is visible but uncreatable.
 class Providers : public QAbstractListModel {
     Q_OBJECT
     Q_DISABLE_COPY_MOVE(Providers)
+    QML_ELEMENT
+    QML_UNCREATABLE("Built in main() from configuration")
+
+    // The list is immutable after construction, so the count is constant too.
+    Q_PROPERTY(int count READ count CONSTANT)
 
 public:
     // Roles exposed to a view; a delegate reads model.<roleName>. Qt roles are

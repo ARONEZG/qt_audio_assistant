@@ -66,15 +66,23 @@ repos:
         types: [file]
         files: \.qml$
 
-      # qmllint: QML lint
+      # qmllint: QML lint. Uses the Qt the module is built against (see
+      # static-analysis.sh): the distro qt6-tools are 6.4.2 and cannot parse the
+      # generated *.qmltypes of a project module, so they reject valid QML.
       - id: qmllint
         name: "qmllint"
         entry: >
           bash -c '
+            QMLLINT="/usr/lib/qt6/bin/qmllint";
+            for prefix in "$HOME/Qt/6.8.3/gcc_64" "${QTDIR:-}" /opt/Qt/6.8.3/gcc_64; do
+              if [ -n "$prefix" ] && [ -x "$prefix/bin/qmllint" ]; then
+                QMLLINT="$prefix/bin/qmllint"; break;
+              fi;
+            done;
             FILES=$(git diff --cached --name-only --diff-filter=ACMR |
                     grep -E "\.qml$" || true);
             if [ -n "$FILES" ]; then
-              /usr/lib/qt6/bin/qmllint $FILES;
+              "$QMLLINT" $FILES;
             fi'
         language: system
         pass_filenames: false
