@@ -4,6 +4,11 @@ name: CI — Quality Gates
 #   clang-format → qmlformat/qmllint → Debug/Release build → tests →
 #   static analysis (clang-tidy, clazy) → sanitizers → coverage.
 #
+# spdlog is provided by Conan (spdlog/1.14.1 in conanfile.py) — the single
+# source of truth for its version. Every job that builds installs Conan, runs
+# `conan install` and points CMake at the generated toolchain via
+# -DCONAN_BUILD_DIR; no system libspdlog-dev is used.
+#
 # Runs on push to main, PR to main, and manually.
 # Free for public repos; 2000 min/month for private repos.
 
@@ -100,7 +105,6 @@ jobs:
             clang-18 \
             ninja-build \
             ccache \
-            libspdlog-dev \
             qt6-base-dev \
             qt6-declarative-dev \
             qt6-tools-dev \
@@ -113,6 +117,18 @@ jobs:
             qml6-module-qtqml \
             qml6-module-qtqml-models \
             qml6-module-qtqml-workerscript
+
+      - name: Install Conan
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install conan
+          else
+            python3 -m pip install --user --break-system-packages conan
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Conan install (spdlog)
+        run: conan install . -of build/conan --build=missing -pr profiles/clang18
 
       - name: Setup ccache
         uses: actions/cache@v4
@@ -129,6 +145,7 @@ jobs:
             cmake -S . -B build-debug \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DCONAN_BUILD_DIR=build/conan \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
@@ -163,7 +180,6 @@ jobs:
           sudo apt-get install -y -qq \
             clang-18 \
             ninja-build \
-            libspdlog-dev \
             qt6-base-dev \
             qt6-declarative-dev \
             qt6-tools-dev \
@@ -176,12 +192,27 @@ jobs:
             qml6-module-qtqml-models \
             qml6-module-qtqml-workerscript
 
+      - name: Install Conan
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install conan
+          else
+            python3 -m pip install --user --break-system-packages conan
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Conan install (spdlog)
+        run: |
+          conan install . -of build/conan --build=missing \
+            -pr profiles/clang18 -s build_type=Release
+
       - name: Configure (Release)
         run: |
           CC=clang-18 CXX=clang++-18 \
             cmake -S . -B build-release \
             -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCONAN_BUILD_DIR=build/conan
 
       - name: Build (Release)
         run: cmake --build build-release -j$(nproc)
@@ -214,9 +245,22 @@ jobs:
           sudo apt-get install -y -qq \
             clang-tidy-18 \
             clazy \
-            libspdlog-dev \
             qt6-base-dev \
             qt6-declarative-dev
+
+      - name: Install Conan
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install conan
+          else
+            python3 -m pip install --user --break-system-packages conan
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # The compile_commands.json from the Debug job points at spdlog headers
+      # inside the Conan cache; install the same Debug packages to restore them.
+      - name: Conan install (spdlog)
+        run: conan install . -of build/conan --build=missing -pr profiles/clang18
 
       - name: clang-tidy
         run: |
@@ -274,7 +318,6 @@ jobs:
           sudo apt-get install -y -qq \
             clang-18 \
             ninja-build \
-            libspdlog-dev \
             qt6-base-dev \
             qt6-declarative-dev \
             qt6-tools-dev \
@@ -287,12 +330,25 @@ jobs:
             qml6-module-qtqml-models \
             qml6-module-qtqml-workerscript
 
+      - name: Install Conan
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install conan
+          else
+            python3 -m pip install --user --break-system-packages conan
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Conan install (spdlog)
+        run: conan install . -of build/conan --build=missing -pr profiles/clang18
+
       - name: Configure (ASan + UBSan)
         run: |
           CC=clang-18 CXX=clang++-18 \
             cmake -S . -B build-asan \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DCONAN_BUILD_DIR=build/conan \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
             -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
@@ -325,7 +381,6 @@ jobs:
             clang-18 \
             ninja-build \
             llvm-18-tools \
-            libspdlog-dev \
             qt6-base-dev \
             qt6-declarative-dev \
             qt6-tools-dev \
@@ -338,12 +393,25 @@ jobs:
             qml6-module-qtqml-models \
             qml6-module-qtqml-workerscript
 
+      - name: Install Conan
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install conan
+          else
+            python3 -m pip install --user --break-system-packages conan
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Conan install (spdlog)
+        run: conan install . -of build/conan --build=missing -pr profiles/clang18
+
       - name: Configure (coverage)
         run: |
           CC=clang-18 CXX=clang++-18 \
             cmake -S . -B build-cov \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DCONAN_BUILD_DIR=build/conan \
             -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
             -DCMAKE_C_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
             -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \

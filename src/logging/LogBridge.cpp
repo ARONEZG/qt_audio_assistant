@@ -12,10 +12,12 @@ namespace {
 
 /// Forwards a single Qt log record to spdlog's default logger.
 ///
-/// QtSystemMsg is an alias for QtCriticalMsg in Qt 6 and is not listed
-/// separately; any other value is treated as critical. An if-else chain is used
+/// In Qt 6 QtMsgType has exactly five enumerators (QtDebugMsg, QtInfoMsg,
+/// QtWarningMsg, QtCriticalMsg, QtFatalMsg); QtSystemMsg was removed in Qt 6
+/// (deprecated since 5.4) and is not part of the enum. An if-else chain is used
 /// instead of switch to avoid conflicting -Wswitch-default and
-/// -Wcovered-switch-default diagnostics when all enumerators are covered.
+/// -Wcovered-switch-default diagnostics when all enumerators are covered, and it
+/// keeps a defensive fallback to critical for any unexpected value.
 void forwardToSpdlog(QtMsgType type, const QMessageLogContext& context, const QString& message) {
     spdlog::level::level_enum level = spdlog::level::critical;
     if (type == QtDebugMsg) {
@@ -29,10 +31,10 @@ void forwardToSpdlog(QtMsgType type, const QMessageLogContext& context, const QS
     }
 
     const char* file = context.file != nullptr ? context.file : "";
-    int line = context.line;  // NOLINT(misc-const-correctness)
+    const int kLine = context.line;
     const char* func = context.function != nullptr ? context.function : "";
 
-    spdlog::log(spdlog::source_loc{file, line, func}, level, "{}", message.toStdString());
+    spdlog::log(spdlog::source_loc{file, kLine, func}, level, "{}", message.toStdString());
 
     // Qt stops handling a fatal message once a custom handler is installed;
     // log it and terminate to preserve the default behaviour.

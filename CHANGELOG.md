@@ -19,10 +19,12 @@
   обработчик и логгер восстанавливаются. `qDebug/qInfo/qWarning/qCritical` маппятся на
   уровни spdlog, `qFatal` логируется и завершает процесс. Подключено в `src/main.cpp`.
 - Зависимость `spdlog/1.14.1` в `conanfile.py`; поиск и линковка `spdlog::spdlog`
-  (`CMakeLists.txt`);
-  в CI и локальных проверках используется системный `libspdlog-dev`.
+  (`CMakeLists.txt`, `find_package(spdlog 1.14 REQUIRED)`). Conan — единственный источник
+  версии: CI, `scripts/ci-check.sh` и `scripts/static-analysis.sh` выполняют `conan install`
+  и передают `-DCONAN_BUILD_DIR`; системный `libspdlog-dev` не используется.
 - Тесты моста логирования (`tests/tst_logging.cpp`): маршрутизация сообщений,
-  фильтрация по уровню, восстановление Qt-обработчика и логгера spdlog.
+  фильтрация по уровню, восстановление Qt-обработчика и логгера spdlog, а также
+  завершение процесса по `qFatal` (проверяется в дочернем процессе).
 - CI pipeline: GitHub Actions workflow (`.github/workflows/ci.yml`), локальный скрипт
   `scripts/ci-check.sh`, pre-commit hooks (`.pre-commit-config.yaml`), конфигурация `act`
   для локального прогона GitHub Actions.

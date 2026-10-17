@@ -2,7 +2,9 @@
 #include <spdlog/sinks/base_sink.h>
 #include <spdlog/spdlog.h>
 
+#include <QCoreApplication>
 #include <QMessageLogContext>
+#include <QProcess>
 #include <QString>
 #include <QtTest>
 #include <memory>
@@ -55,6 +57,28 @@ QtMessageHandler currentHandler() {
     return handler;
 }
 
+/// Outcome of running the test binary in `--fatal-child` mode.
+struct FatalChildResult {
+    QByteArray output;
+    bool terminated{false};
+};
+
+/// Re-invokes this test binary as a child, which emits a single qFatal message,
+/// and reports the child's merged output and whether it terminated abnormally.
+FatalChildResult runFatalChild() {
+    QProcess child;
+    child.setProcessChannelMode(QProcess::MergedChannels);
+    child.start(QCoreApplication::applicationFilePath(), {QStringLiteral("--fatal-child")});
+    const bool kFinished = child.waitForFinished(30000);
+
+    FatalChildResult result;
+    result.output = child.readAllStandardOutput();
+    // std::abort() raises SIGABRT on POSIX (QProcess reports a crash); on
+    // Windows it terminates with a non-zero exit code and no crash status.
+    result.terminated = kFinished && (child.exitStatus() == QProcess::CrashExit || child.exitCode() != 0);
+    return result;
+}
+
 }  // anonymous namespace
 
 class TestLogging : public QObject {
@@ -71,6 +95,7 @@ private slots:
     void test_filtersMessagesBelowLevel();
     void test_restoresQtHandler();
     void test_restoresDefaultLogger();
+    void test_fatalAbortsProcess();
 };
 
 void TestLogging::test_routesDebugMessage() {
@@ -143,6 +168,26 @@ void TestLogging::test_restoresDefaultLogger() {
     QVERIFY(spdlog::default_logger() == kOriginalLogger);
 }
 
-QTEST_MAIN(TestLogging)
+void TestLogging::test_fatalAbortsProcess() {
+    // qFatal() terminates the process, so it cannot be observed in-process; the
+    // test binary re-invokes itself as a child and asserts on the outcome.
+    const FatalChildResult kResult = runFatalChild();
+    QVERIFY2(kResult.output.contains("fatal_routed"), kResult.output.constData());
+    QVERIFY2(kResult.terminated, "qFatal must terminate the process");
+}
+
+int main(int argc, char* argv[]) {
+    QCoreApplication app(argc, argv);  // NOLINT(misc-const-correctness)
+
+    // Child mode for test_fatalAbortsProcess(): install the bridge, emit one
+    // fatal message and let the handler terminate the process.
+    if (app.arguments().contains(QStringLiteral("--fatal-child"))) {
+        audio_assistant::log::LogBridge bridge;  // NOLINT(misc-const-correctness)
+        qFatal("fatal_routed");
+    }
+
+    TestLogging test;
+    return QTest::qExec(&test, argc, argv);
+}
 
 #include "tst_logging.moc"

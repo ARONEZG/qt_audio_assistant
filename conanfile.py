@@ -5,7 +5,10 @@ Linux, Qt is taken from the system (apt/libqt6*-dev) because ConanCenter lacks
 pre-built binaries for Linux/Clang. Uncomment it once pre-built binaries are
 available, or for Windows/macOS builds.
 
-spdlog is the managed runtime dependency (logging).
+spdlog is the managed runtime dependency (logging) and Conan is the single
+source of truth for its version (1.14.1). Local builds, ``scripts/ci-check.sh``
+and CI all run ``conan install`` and configure CMake with ``-DCONAN_BUILD_DIR``;
+no system ``libspdlog-dev`` is used.
 
 Usage (from the project root, Linux with Clang 18 and Ninja):
 
@@ -25,7 +28,8 @@ Usage (from the project root, Linux with Clang 18 and Ninja):
     cmake --build build
     ctest --test-dir build --output-on-failure
 
-    # Without Conan (system Qt):
+    # Without Conan: only if a system spdlog >= 1.14 is available
+    # (CMakeLists.txt pins find_package(spdlog 1.14 REQUIRED)).
     CC=clang-18 CXX=clang++-18 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -G Ninja
     cmake --build build
 """
@@ -71,8 +75,10 @@ class AudioAssistantConan(ConanFile):
     #     "qt/*:with_doubleconversion": True,
     #     "qt/*:with_dbus": True,
     # }
-    # Managed runtime dependency: spdlog (logging). Qt is taken from the system
-    # on Linux (see note above); add "qt/6.4.2" here for Windows/macOS builds.
+    # Managed runtime dependency: spdlog (logging) — the single source of truth
+    # for its version, used by local builds, scripts/ci-check.sh and CI. Qt is
+    # taken from the system on Linux (see note above); add "qt/6.4.2" here for
+    # Windows/macOS builds.
     requires = "spdlog/1.14.1"
 
     def layout(self):

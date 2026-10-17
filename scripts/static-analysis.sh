@@ -264,9 +264,23 @@ ensure_compile_commands() {
     fi
 
     local build_dir="$PROJECT_ROOT/build-debug"
+    local conan_dir="$PROJECT_ROOT/build/conan"
     mkdir -p "$build_dir"
+
+    if ! command -v conan &>/dev/null; then
+        fail "conan not found in PATH (required for the spdlog dependency)"
+        return 1
+    fi
+    info "Conan install (Debug)"
+    conan install "$PROJECT_ROOT" -of "$conan_dir" --build=missing \
+        -pr "$PROJECT_ROOT/profiles/clang18" -s build_type=Debug 2>&1 | tail -3 || {
+        fail "conan install failed"
+        return 1
+    }
+
     CC="$cc" CXX="$cpp" cmake -S "$PROJECT_ROOT" -B "$build_dir" \
-        -G Ninja -DCMAKE_BUILD_TYPE=Debug 2>&1 | tail -3 || {
+        -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+        -DCONAN_BUILD_DIR="$conan_dir" 2>&1 | tail -3 || {
         fail "CMake configure (Debug) failed"
         return 1
     }
@@ -366,6 +380,7 @@ step_scan_build() {
     fi
 
     local build_dir="$PROJECT_ROOT/build-scan"
+    local conan_dir="$PROJECT_ROOT/build/conan"
     mkdir -p "$build_dir"
 
     local cc cpp
@@ -375,9 +390,21 @@ step_scan_build() {
         warn "Clang not found — skipping scan-build"
         return 0
     fi
+    if ! command -v conan &>/dev/null; then
+        warn "conan not found — skipping scan-build"
+        return 0
+    fi
+
+    info "Conan install (Debug)"
+    conan install "$PROJECT_ROOT" -of "$conan_dir" --build=missing \
+        -pr "$PROJECT_ROOT/profiles/clang18" -s build_type=Debug 2>&1 | tail -3 || {
+        warn "scan-build: conan install failed — skipping"
+        return 0
+    }
 
     CC="$cc" CXX="$cpp" cmake -S "$PROJECT_ROOT" -B "$build_dir" \
-        -G Ninja -DCMAKE_BUILD_TYPE=Debug 2>&1 | tail -3 || {
+        -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+        -DCONAN_BUILD_DIR="$conan_dir" 2>&1 | tail -3 || {
         warn "scan-build: CMake configure failed — skipping"
         return 0
     }

@@ -56,6 +56,29 @@ find_clangpp() {
     echo ""
 }
 
+# ── Conan / spdlog dependency ───────────────────────────────
+
+CONAN_BUILD_DIR="$PROJECT_ROOT/build/conan"
+
+# spdlog is a managed Conan dependency (conanfile.py) and CMake pins
+# find_package(spdlog 1.14 REQUIRED), so every CMake configure must be preceded
+# by `conan install` and receive -DCONAN_BUILD_DIR. The build type is matched so
+# Release links a Release-built spdlog, not the Debug one.
+conan_install() {
+    local build_type="$1"
+    if ! command -v conan &>/dev/null; then
+        fail "conan not found in PATH (required for the spdlog dependency)"
+        return 1
+    fi
+    info "Conan install ($build_type)"
+    conan install "$PROJECT_ROOT" -of "$CONAN_BUILD_DIR" --build=missing \
+        -pr "$PROJECT_ROOT/profiles/clang18" -s build_type="$build_type" 2>&1 | tail -3 || {
+        fail "conan install failed"
+        return 1
+    }
+    pass "Conan install ($build_type) OK"
+}
+
 # ── Step functions ──────────────────────────────────────────
 
 step_debug_build() {
@@ -71,8 +94,11 @@ step_debug_build() {
     local build_dir="$PROJECT_ROOT/build-debug"
     mkdir -p "$build_dir"
 
+    conan_install Debug || return 1
+
     CC="$cc" CXX="$cpp" cmake -S "$PROJECT_ROOT" -B "$build_dir" \
-        -G Ninja -DCMAKE_BUILD_TYPE=Debug 2>&1 | tail -5 || {
+        -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+        -DCONAN_BUILD_DIR="$CONAN_BUILD_DIR" 2>&1 | tail -5 || {
         fail "CMake configure (Debug) failed"
         return 1
     }
@@ -112,8 +138,11 @@ step_release_build() {
     local build_dir="$PROJECT_ROOT/build-release"
     mkdir -p "$build_dir"
 
+    conan_install Release || return 1
+
     CC="$cc" CXX="$cpp" cmake -S "$PROJECT_ROOT" -B "$build_dir" \
-        -G Ninja -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -5 || {
+        -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DCONAN_BUILD_DIR="$CONAN_BUILD_DIR" 2>&1 | tail -5 || {
         fail "CMake configure (Release) failed"
         return 1
     }
@@ -153,10 +182,13 @@ step_asan_ubsan() {
     local build_dir="$PROJECT_ROOT/build-asan"
     mkdir -p "$build_dir"
 
+    conan_install Debug || return 1
+
     info "Configuring ASan+UBSan build..."
     CC="$cc" CXX="$cpp" cmake -S "$PROJECT_ROOT" -B "$build_dir" \
         -G Ninja \
         -DCMAKE_BUILD_TYPE=Debug \
+        -DCONAN_BUILD_DIR="$CONAN_BUILD_DIR" \
         -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
         -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
         -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
@@ -195,10 +227,13 @@ step_coverage() {
     local build_dir="$PROJECT_ROOT/build-cov"
     mkdir -p "$build_dir"
 
+    conan_install Debug || return 1
+
     info "Configuring coverage build..."
     CC="$cc" CXX="$cpp" cmake -S "$PROJECT_ROOT" -B "$build_dir" \
         -G Ninja \
         -DCMAKE_BUILD_TYPE=Debug \
+        -DCONAN_BUILD_DIR="$CONAN_BUILD_DIR" \
         -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
         -DCMAKE_C_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
         -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \

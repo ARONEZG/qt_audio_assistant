@@ -109,9 +109,11 @@ find_package(Qt6 REQUIRED COMPONENTS
 )
 
 # ── spdlog logging ───────────────────────────────────────────
-# spdlog is obtained via Conan; on Linux the system package
-# (libspdlog-dev) may also be used as a fallback.
-find_package(spdlog REQUIRED)
+# spdlog is a managed Conan dependency (spdlog/1.14.1 in conanfile.py); the exact
+# version comes from the Conan toolchain loaded above. The minimum is pinned here
+# so that configuring against an older system spdlog fails immediately instead of
+# silently building with a different version.
+find_package(spdlog 1.14 REQUIRED)
 
 # ── QML module ──────────────────────────────────────────────
 # Put Main.qml at the root of the module resources (default behaviour
