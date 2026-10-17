@@ -22,3 +22,6 @@
   зависимостями. Зависимость Qt через ConanCenter пока отключена (`requires = ()`); на Linux
   Qt берётся из системы.
 - Опциональная поддержка Conan в `CMakeLists.txt` через переменную `CONAN_BUILD_DIR`.
+- `AppController` как QObject со свойством `status` (initial value, guarded setter и уведомление
+  `statusChanged`): статус окна теперь приходит из C++, а не захардкожен в QML; unit-тесты модуля
+  подключены к CTest (`tst_appcontroller`).

@@ -42,6 +42,11 @@ CheckOptions:
   # вне camelBack-конвенции по дизайну.
   readability-identifier-naming.FunctionIgnoredRegexp: '^test_.*(_data)?$'
   readability-identifier-naming.VariableCase: camelBack
+  # Локальные константы (напр. const QSignalSpy spy в Qt Test) остаются в
+  # camelCase, как и прочие локальные переменные. Константы на уровне
+  # namespace/class продолжают требовать префикс k и CamelCase (см. ниже).
+  readability-identifier-naming.LocalConstantCase: camelBack
+  readability-identifier-naming.LocalConstantPrefix: ''
   readability-identifier-naming.PrivateMemberCase: camelBack
   readability-identifier-naming.PrivateMemberSuffix: '_'
   readability-identifier-naming.ConstantCase: CamelCase

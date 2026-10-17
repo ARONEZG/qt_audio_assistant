@@ -22,7 +22,11 @@ ApplicationWindow {
         }
 
         Label {
-            text: "Каркас приложения собран. Функции пока не реализованы."
+            // Статус приходит из C++-контроллера через context property; строка
+            // "Каркас приложения собран..." больше не захардкожена в QML.
+            // objectName используется интеграционным тестом для поиска Label.
+            objectName: "statusLabel"
+            text: controller.status
             font.pixelSize: 14
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
