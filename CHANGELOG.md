@@ -16,6 +16,8 @@
 - Короткий блок критических правил для AI-агента (`docs/AGENTS_CRITICAL.md`),
   подключаемый через `opencode.json` (`instructions`), чтобы правила изоляции и
   доставки (ветка → push → PR) не терялись в длинных сессиях.
+- Git-hook'и `.githooks/pre-commit` и `.githooks/pre-push` + `scripts/setup-git-hooks.sh`:
+  блокируют прямые коммиты и пуши в `main`/`master`, принуждая к изоляции в ветках.
 - CI pipeline: GitHub Actions workflow (`.github/workflows/ci.yml`), локальный скрипт
   `scripts/ci-check.sh`, pre-commit hooks (`.pre-commit-config.yaml`), конфигурация `act`
   для локального прогона GitHub Actions.

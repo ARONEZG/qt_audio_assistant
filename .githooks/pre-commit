@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Guard: запрещает прямые коммиты в main/master.
+# Обход (только в исключительном случае): git commit --no-verify
+set -euo pipefail
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+
+case "$branch" in
+  main|master)
+    echo "error: прямые коммиты в '$branch' запрещены." >&2
+    echo "       Создайте ветку (feature/..., fix/..., chore/...) и откройте PR." >&2
+    echo "       Обход (исключение): git commit --no-verify" >&2
+    exit 1
+    ;;
+esac
+
+exit 0
