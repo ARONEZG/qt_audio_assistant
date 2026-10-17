@@ -16,10 +16,14 @@
 - **spdlog** 1.14+ — зависимость логирования, управляется через Conan
   (`spdlog/1.14.1` в `conanfile.py`). Системный `libspdlog-dev` в Ubuntu 24.04
   (spdlog 1.12) не подходит: CMake требует `find_package(spdlog 1.14 REQUIRED)`.
-- **Conan** 2.x — обязателен: через него подтягиваются `spdlog` и **LLMQore v0.8.0**
-  (MIT). LLMQore нет в ConanCenter, поэтому он собирается из in-repo рецепта
-  `recipes/llmqore`, который скачивает исходники с `github.com` (доступ к сети нужен
-  на этапе `conan install`, а не конфигурации CMake).
+- **miniaudio** 0.11.25 — зависимость захвата аудио, управляется через Conan
+  (`miniaudio/0.11.25` в `conanfile.py`; лицензия Unlicense/MIT-0). Header-only,
+  без транзитивных зависимостей. Версия — единственный источник правды; решение
+  и матрица покрытия — `docs/ADR-audio-capture.md`.
+- **Conan** 2.x — обязателен: через него подтягиваются `spdlog`, **miniaudio**
+  и **LLMQore v0.8.0** (MIT). LLMQore нет в ConanCenter, поэтому он собирается из
+  in-repo рецепта `recipes/llmqore`, который скачивает исходники с `github.com`
+  (доступ к сети нужен на этапе `conan install`, а не конфигурации CMake).
 
 ### Установка Qt 6.8.3 (aqtinstall, без sudo)
 
@@ -59,12 +63,33 @@ cmake --build build --parallel
 в `CMakeLists.txt` он не зашит.
 
 Проект требует Clang; конфигурация завершится ошибкой с другим компилятором.
-Все зависимости (`spdlog`, LLMQore) поставляются через Conan (см. ниже).
+Все зависимости (`spdlog`, `miniaudio`, LLMQore) поставляются через Conan (см. ниже).
+
+## Захват аудио: зависимость и покрытие платформ
+
+Для захвата аудио подключён **miniaudio** (ConanCenter, header-only). Логика захвата
+пока не реализована — подготовлена только зависимость и smoke-тест компиляции/линковки.
+Матрица покрытия (подробнее — `docs/ADR-audio-capture.md`):
+
+| Платформа | Микрофон | Системный звук (loopback) |
+|---|---|---|
+| Windows | Да (WASAPI) | Да, нативно (`ma_device_type_loopback`, WASAPI) |
+| Linux | Да (PulseAudio/PipeWire-Pulse, ALSA, JACK) | Да, через «monitor»-источник PulseAudio/PipeWire-Pulse |
+| macOS | Да (CoreAudio) | Нет — gap (см. ниже) |
+
+- **Linux, runtime-требование:** для системного звука нужен работающий звуковой сервер
+  PulseAudio или PipeWire с PipeWire-Pulse и включённым «monitor»-источником на нужном
+  устройстве вывода. Нативный loopback miniaudio для Linux-backend'ов не поддерживает.
+- **macOS gap:** нативный захват системного звука miniaudio не покрывает. Будущее решение —
+  отдельный platform-модуль на **ScreenCaptureKit** (macOS 13+) или **CATapDescription**
+  (`AudioHardwareCreateProcessTap`, macOS 14.2+); до его появления macOS loopback
+  отсутствует и должен явно показываться как недоступная функция.
 
 ## Сборка с Conan (рекомендуемый способ)
 
-Conan 2.x управляет зависимостями: `spdlog/1.14.1` берётся из ConanCenter,
-`llmqore/0.8.0` собирается из in-repo рецепта `recipes/llmqore` (см. `conanfile.py`).
+Conan 2.x управляет зависимостями: `spdlog/1.14.1` и `miniaudio/0.11.25` берутся
+из ConanCenter, `llmqore/0.8.0` собирается из in-repo рецепта `recipes/llmqore`
+(см. `conanfile.py`).
 Qt ставится отдельно через `aqtinstall` и находится по `CMAKE_PREFIX_PATH`
 (зависимость Qt через ConanCenter пока отключена). Требуется `conan` 2.x в `PATH`.
 
@@ -125,6 +150,10 @@ ctest --preset audio-assistant-debug --output-on-failure
   clang-format, clang-tidy, Qt Test. Qt 6.8.3 установлен через `aqtinstall`
   в `~/Qt/6.8.3/gcc_64`; LLMQore v0.8.0 подключается через Conan
   (`recipes/llmqore`) и линкуется в исполняемый файл (без использования API).
+  `miniaudio/0.11.25` подключается через ConanCenter: собирается один TU с
+  `MINIAUDIO_IMPLEMENTATION` (библиотека `audio-assistant-audio`), заголовок
+  включён как SYSTEM; API захвата не используется, добавлен только smoke-тест
+  линковки (`tst_audio_smoke`).
   Отдельной графической сессии
   во время проверки не было; GUI запускался только с `QT_QPA_PLATFORM=offscreen`.
   Сборка через Conan проверена только на Linux/Ninja; конфигурация с другими генераторами
@@ -136,7 +165,8 @@ ctest --preset audio-assistant-debug --output-on-failure
 ## Не реализовано
 
 - AppController и архитектура сервисов
-- Захват микрофона и системного аудио
+- Захват микрофона и системного аудио (зависимость `miniaudio` подключена,
+  логика захвата не реализована)
 - Кольцевой аудиобуфер
 - Транскрибация
 - Интеграция с LLM / сетевые запросы
@@ -150,8 +180,11 @@ ctest --preset audio-assistant-debug --output-on-failure
 1. Добавить `AppController`, свойства Qt и связь C++ с QML
 2. Интерфейсы транскрибации и LLM (без сетевых реализаций)
 3. `AudioBuffer` + модульные тесты
-4. Qt Multimedia + аудиозахват
-5. Обработка последних 30 секунд аудио
-6. Реальные сервисы и обработка ошибок
-7. Системный аудиовыход + глобальная горячая клавиша
-8. CI-матрица на Linux, Windows, macOS
+4. Захват микрофона через `miniaudio` за узким интерфейсом
+5. Системный звук (loopback): Windows — нативно (WASAPI), Linux — monitor-источник
+   PulseAudio/PipeWire-Pulse
+6. macOS loopback: отдельный platform-модуль (ScreenCaptureKit 13+ / CATap 14.2+)
+7. Обработка последних 30 секунд аудио
+8. Реальные сервисы и обработка ошибок
+9. Глобальная горячая клавиша
+10. CI-матрица на Linux, Windows, macOS

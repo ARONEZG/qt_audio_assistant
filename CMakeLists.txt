@@ -89,8 +89,9 @@ if(DEFINED CONAN_BUILD_DIR)
     _audio_assistant_find_conan_toolchain("${_conan_dir}" _conan_toolchain)
 
     if(NOT _conan_toolchain)
-        # The managed dependencies (spdlog) are not installed for this build
-        # type yet. Install them automatically so one-click IDE builds work.
+        # The managed dependencies (spdlog, miniaudio, llmqore) are not installed
+        # for this build type yet. Install them automatically so one-click IDE
+        # builds work.
         find_program(_conan_exe conan)
         if(NOT _conan_exe)
             message(FATAL_ERROR
@@ -260,6 +261,40 @@ target_compile_options(audio-assistant-qt-warnings INTERFACE
 # linked PRIVATE into the executable.
 find_package(LLMQore REQUIRED)
 
+# ── miniaudio (audio capture) ───────────────────────────────
+# miniaudio is a managed Conan dependency (miniaudio/0.11.25 in conanfile.py) —
+# the single source of truth for its version. It is a third-party, header-only
+# C library (miniaudio.h) that provides microphone capture on Windows/Linux/
+# macOS and native loopback capture of the system output on Windows; on Linux
+# the system output is captured through a PulseAudio/PipeWire-Pulse monitor
+# source. macOS loopback is a documented gap (docs/ADR-audio-capture.md).
+find_package(miniaudio REQUIRED)
+
+# miniaudio.h is third-party code. CMakeDeps exports its include directory via
+# INTERFACE_INCLUDE_DIRECTORIES (a plain -I); repeating the same paths in
+# INTERFACE_SYSTEM_INCLUDE_DIRECTORIES makes CMake emit them as -isystem so the
+# project's -Weverything -Werror profile does not flag the vendored header.
+set_target_properties(miniaudio::miniaudio PROPERTIES
+    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${miniaudio_INCLUDE_DIRS}"
+)
+
+# ── Audio library ───────────────────────────────────────────
+# Thin wrapper that owns the miniaudio implementation translation unit, so the
+# third-party amalgamation is compiled once and the future platform-specific
+# capture code has a single home behind a narrow interface. It contains no
+# capture logic yet — only the implementation compile unit.
+add_library(audio-assistant-audio STATIC
+    src/audio/MiniaudioImplementation.cpp
+)
+
+set_target_properties(audio-assistant-audio PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(audio-assistant-audio
+    PRIVATE audio-assistant-strict miniaudio::miniaudio
+)
+
 # ── Domain library ──────────────────────────────────────────
 # Chat domain (immutable values, provider role interface, collections). Built as
 # a static library so the executable and every test target link the same
@@ -352,6 +387,7 @@ set_target_properties(audio-assistant PROPERTIES
 target_link_libraries(audio-assistant PRIVATE
     audio-assistant-strict
     audio-assistant-qt-warnings
+    audio-assistant-audio
     audio-assistant-domain
     # For a static QML module the generated plugin must be linked into the
     # executable, otherwise the engine cannot register the module's C++ types.
@@ -425,6 +461,33 @@ audio_assistant_add_domain_test(tst_newchat
 audio_assistant_add_domain_test(tst_placeholderprovider
     tests/tst_placeholderprovider.cpp
     src/app/PlaceholderProvider.cpp
+)
+
+# ── Audio smoke test ────────────────────────────────────────
+# Proves the miniaudio dependency configures, compiles and links (see the test
+# file header for the exact scope) without touching a real audio device.
+qt_add_executable(tst_audio_smoke
+    tests/tst_audio_smoke.cpp
+)
+
+set_target_properties(tst_audio_smoke PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+# miniaudio::miniaudio is linked explicitly so the test's own <miniaudio.h>
+# include is resolved as SYSTEM, exactly like the project targets; the
+# implementation symbols come from audio-assistant-audio.
+target_link_libraries(tst_audio_smoke PRIVATE
+    audio-assistant-strict
+    audio-assistant-audio
+    miniaudio::miniaudio
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_audio_smoke COMMAND tst_audio_smoke)
+set_tests_properties(tst_audio_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
 # GUI/QML tests: they load the real QML module offscreen and drive it with a

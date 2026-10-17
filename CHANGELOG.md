@@ -174,6 +174,22 @@
 - Зависимость **LLMQore v0.8.0** (MIT) подключается через CMake `FetchContent` с
   зафиксированным тегом и линкуется в исполняемый файл `audio-assistant`. API библиотеки
   пока не используется.
+- Зависимость **miniaudio** 0.11.25 (Unlicense/MIT-0, header-only, без транзитивных
+  зависимостей) из ConanCenter — основа будущего захвата микрофона (Windows/Linux/macOS)
+  и системного звука (Windows — нативно через WASAPI; Linux — через monitor-источник
+  PulseAudio/PipeWire-Pulse). Решение, карточка кандидата и матрица покрытия —
+  `docs/ADR-audio-capture.md`; нативный loopback на macOS отмечен как gap
+  (ScreenCaptureKit 13+ / CATap 14.2+ как будущее решение). Версия берётся из
+  `conanfile.py` — единственного источника правды.
+- Статическая библиотека `audio-assistant-audio`: единственный translation unit с
+  `MINIAUDIO_IMPLEMENTATION`, амальгамация сторонней библиотеки компилируется один раз.
+  Заголовок `miniaudio.h` подключается как SYSTEM-каталог, поэтому чужой код не попадает
+  под строгий профиль `-Weverything -Werror`. Библиотека линкуется в `audio-assistant`;
+  логика захвата не добавлена.
+- Smoke-тест `tst_audio_smoke` (Qt Test + CTest, offscreen, детерминированно): проверяет
+  компиляцию и линковку miniaudio — версию, символ из implementation-TU (значит, системные
+  библиотеки `m`/`pthread`/`dl` разрешаются) и матрицу loopback — не открывая и не
+  перечисляя реальные аудиоустройства.
 
 ### Changed
 
