@@ -8,7 +8,10 @@ git -C "$repo_root" config core.hooksPath .githooks
 echo "core.hooksPath = .githooks — git-hook'и включены."
 
 # Предупреждение: артефакт `pre-commit install` игнорируется из-за core.hooksPath.
-hooks_pre_commit="$(git -C "$repo_root" rev-parse --git-path hooks/pre-commit)"
+# Проверяем дефолтный каталог хуков: `git rev-parse --git-path` учитывает
+# core.hooksPath и вернул бы наш же .githooks/pre-commit.
+common_dir="$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir)"
+hooks_pre_commit="$common_dir/hooks/pre-commit"
 if [ -e "$hooks_pre_commit" ]; then
   echo "warning: найден $hooks_pre_commit (артефакт 'pre-commit install')." >&2
   echo "         Он игнорируется: core.hooksPath указывает на .githooks/," >&2
