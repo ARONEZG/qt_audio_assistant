@@ -26,9 +26,19 @@
 - без слова `WIP`, если коммит претендует на мердж;
 - не включает закрытые данные и API-ключи.
 
+## Push и Pull Request
+
+- Любое значимое изменение функционала или баг-фикс после прохождения локальных
+  quality gates (`scripts/ci-check.sh`) автоматически пушится в `origin`.
+- Сразу после push создаётся pull request через GitHub CLI (`gh pr create`) или API.
+- Агент не ждёт разрешения на push для значимых изменений — это часть Definition of Done.
+- Не выполнять `git push --force` над опубликованной историей без явного разрешения.
+- `git commit --amend` над опубликованной историей запрещён без разрешения.
+
 ## Merge
 
 - Только по явной команде пользователя.
+- Мерж в `main` запрещён, пока все обязательные проверки CI/CD не зелёные:
+  GitHub Actions (`.github/workflows/ci.yml`) должен пройти полный цикл
+  (Format + QML, Debug/Release build + tests, Static Analysis, Sanitizers, Coverage).
 - Перед мерджем фиксируются все обязательные quality gates.
-- Не выполнять `git push`, `git commit` с неатомарной кучей изменений,
-  `git commit --amend`/`--force` над опубликованной историей без разрешения.

@@ -38,3 +38,5 @@
 - Обновлён `.gitignore`: исключены артефакты покрытия (`*.profraw`, `*.profdata`),
   кеш-директория `.cache/`.
 - Обновлён `docs/STATIC_ANALYSIS_TOOLS.md`: состояние инструментов в окружении.
+- Правила Git workflow: авто-push + auto-PR для значимых изменений, CI/CD gate для
+  мержа, изоляция изменений (`AGENTS.md` §6, `docs/BRANCHING.md`).
