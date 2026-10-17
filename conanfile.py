@@ -6,11 +6,19 @@ ConanCenter lacks pre-built Qt binaries for Linux/Clang. On Linux, Qt is
 instead installed per-user with aqtinstall into ``~/Qt/6.8.3/gcc_64`` and
 located by CMake via ``-DCMAKE_PREFIX_PATH``.
 
-spdlog (logging) and LLMQore (LLM client) are the managed dependencies and
-Conan is the single source of truth for their versions (spdlog/1.14.1,
-llmqore/0.8.0). Local builds, ``scripts/ci-check.sh`` and CI all run
-``conan install`` and configure CMake with ``-DCONAN_BUILD_DIR``; no system
-``libspdlog-dev`` is used.
+spdlog (logging), LLMQore (LLM client) and miniaudio (audio capture) are the
+managed dependencies and Conan is the single source of truth for their versions
+(spdlog/1.14.1, llmqore/0.8.0, miniaudio/0.11.25). Local builds,
+``scripts/ci-check.sh`` and CI all run ``conan install`` and configure CMake with
+``-DCONAN_BUILD_DIR``; no system ``libspdlog-dev`` is used.
+
+miniaudio is a single-header C library (Unlicense/MIT-0) that provides
+microphone capture on Windows/Linux/macOS plus native loopback capture of the
+system output on Windows (WASAPI). On Linux the system output is captured as a
+PulseAudio/PipeWire-Pulse "monitor" source; on macOS native loopback is not
+supported by miniaudio and is a documented gap (see
+``docs/ADR-audio-capture.md``). It comes from ConanCenter as a header-only
+package with no transitive dependencies.
 
 spdlog comes from ConanCenter. LLMQore is not published on ConanCenter, so it
 is provided by the in-repo recipe ``recipes/llmqore`` (pinned to the upstream
@@ -49,9 +57,10 @@ Usage (from the project root, Linux with Clang 18 and Ninja):
     cmake --build build
     ctest --test-dir build --output-on-failure
 
-    # Conan is mandatory: spdlog and LLMQore are resolved through the
-    # Conan-generated toolchain (find_package(spdlog 1.14 REQUIRED) and
-    # find_package(LLMQore REQUIRED) in CMakeLists.txt).
+    # Conan is mandatory: spdlog, LLMQore and miniaudio are resolved through
+    # the Conan-generated toolchain (find_package(spdlog 1.14 REQUIRED),
+    # find_package(LLMQore REQUIRED) and find_package(miniaudio REQUIRED) in
+    # CMakeLists.txt).
 """
 
 from conan import ConanFile
@@ -105,7 +114,10 @@ class AudioAssistantConan(ConanFile):
     # * spdlog — logging, fetched from ConanCenter.
     # * llmqore — LLM client, provided by the in-repo recipe recipes/llmqore
     #   (exported before `conan install`); see the module docstring.
-    requires = "spdlog/1.14.1", "llmqore/0.8.0"
+    # * miniaudio — audio capture (microphone, and system loopback on
+    #   Windows/Linux), fetched from ConanCenter; header-only, single
+    #   package-id, no transitive dependencies. See docs/ADR-audio-capture.md.
+    requires = "spdlog/1.14.1", "llmqore/0.8.0", "miniaudio/0.11.25"
 
     def layout(self):
         cmake_layout(self)
