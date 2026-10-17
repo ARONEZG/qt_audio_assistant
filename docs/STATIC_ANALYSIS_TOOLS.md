@@ -40,6 +40,28 @@
   clang-tidy, cppcheck, GCC analyzer и Infer поверх `compile_commands.json`; хранение дефектов,
   diff между прогонами, web viewer. Не заменяет отдельные шаги clazy и строгой сборки.
 
+## Быстрый локальный прогон
+
+`scripts/static-analysis.sh` (без аргументов) и `scripts/ci-check.sh --all` зеркалят
+обязательную CI-джобу «Static Analysis» и запускают только проверки, нужные для merge:
+`clang-format`, `qmlformat`, `qmllint`, `clang-tidy`, `clazy`, `cppcheck`.
+
+- Анализируется только собственный код (`src/`, `tests/`, `qml/`). Сторонние библиотеки
+  (LLMQore в `_deps/`), moc/qml-генерация и Qt build helpers исключены: `clang-tidy`/`clazy`
+  получают список translation units, а `CodeChecker` — отфильтрованную базу компиляции.
+- `clang-tidy` и `clazy` распараллелены (по умолчанию `nproc`; переопределение — `ANALYSIS_JOBS=N`).
+- Локальные сборки идут через `ccache` (если установлен), поэтому повторные прогоны
+  переиспользуют объектные файлы.
+
+Тяжёлые необязательные анализаторы (`scan-build`, `iwyu`, `CodeChecker`) не входят в CI-gate
+и запускаются явно: `scripts/static-analysis.sh --deep` или `scripts/ci-check.sh --deep`.
+Отдельные шаги по-прежнему доступны флагами (`--cppcheck`, `--scan-build`, `--iwyu`,
+`--codechecker`).
+
+Coverage-отчёт запускает `llvm-profdata`/`llvm-cov` с отключённым debuginfod
+(`env -u DEBUGINFOD_URLS`): иначе при выставленном `DEBUGINFOD_URLS` они блокируются на
+сетевых запросах за отладочной информацией системных библиотек.
+
 ## Примерные команды (ориентир, проверить под текущую ОС)
 
 ```bash

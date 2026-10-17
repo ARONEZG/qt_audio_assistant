@@ -10,6 +10,13 @@
 ### Fixed
 
 - Окно приложения больше не зависает невидимым: добавлено свойство `visible: true` в `ApplicationWindow` (`qml/Main.qml`). Ранее окно создавалось, но не отображалось.
+- Локальная генерация coverage-отчёта больше не зависает на сетевых запросах:
+  `llvm-profdata` и `llvm-cov` запускаются с отключённым debuginfod
+  (`env -u DEBUGINFOD_URLS`). При выставленном `DEBUGINFOD_URLS` (по умолчанию в части
+  окружений Ubuntu) `llvm-cov` блокировался на загрузке отладочной информации системных
+  библиотек; собственные объекты проекта несут DWARF сами.
+- `CodeChecker analyze` в `scripts/static-analysis.sh` получал недопустимый аргумент
+  `--analyzers clang-tidy,cppcheck` (анализаторы передаются через пробел).
 
 ### Added
 
@@ -71,6 +78,18 @@
 
 ### Changed
 
+- Локальный прогон quality gates (`scripts/ci-check.sh`, `scripts/static-analysis.sh`)
+  стал значительно быстрее:
+  - `clang-tidy` и `clazy` распараллелены по числу CPU (`ANALYSIS_JOBS`) и анализируют
+    только собственные translation units (`src/`, `tests/`); заголовки проверяются через
+    включающие их TU, а сторонний код (LLMQore в `_deps/`) и moc/qml-генерация исключены;
+  - тяжёлые необязательные анализаторы (`scan-build`, `iwyu`, `CodeChecker`), которых нет
+    в обязательном CI-gate, вынесены в режим `--deep`; `--all` теперь зеркалит CI
+    (clang-format, qmlformat, qmllint, clang-tidy, clazy, cppcheck);
+  - локальные сборки Debug/Release/ASan/coverage идут через `ccache` — повторные прогоны
+    переиспользуют объектные файлы Qt/moc/LLMQore;
+  - `conan install` выполняется один раз на `build_type` за прогон;
+  - `CodeChecker` получает отфильтрованную базу компиляции (только `src/` + `tests/`).
 - Профиль строгих предупреждений Clang вынесен в общую INTERFACE-цель
   `audio-assistant-strict`; `CMakeLists.txt` собирает домен отдельной целью
   `audio-assistant-domain` и линкует её в приложение и тесты (target-based).
