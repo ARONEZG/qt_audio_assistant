@@ -13,6 +13,9 @@
   больше не используются: в Ubuntu 24.04 они дают Qt 6.4.2, чего недостаточно.
   - нужны архивы `qtbase` и `qtdeclarative` (в Qt 6 Qt Quick Controls 2 входит
     в `qtdeclarative`, отдельного архива `qtquickcontrols2` нет)
+- **spdlog** 1.14+ — зависимость логирования, управляется через Conan
+  (`spdlog/1.14.1` в `conanfile.py`). Системный `libspdlog-dev` в Ubuntu 24.04
+  (spdlog 1.12) не подходит: CMake требует `find_package(spdlog 1.14 REQUIRED)`.
 - **Git** 2.x — обязателен: CMake подтягивает библиотеку **LLMQore v0.8.0**
   (MIT) через `FetchContent` на этапе конфигурации, поэтому нужен доступ к `github.com`
 
@@ -55,15 +58,20 @@ cmake --build build --parallel
 LLMQore v0.8.0 (см. `FetchContent_Declare` в `CMakeLists.txt`).
 
 Проект требует Clang; конфигурация завершится ошибкой с другим компилятором.
+Сборка без Conan работает только при наличии системного spdlog 1.14+; зависимость
+логирования рекомендуется ставить через Conan (см. ниже).
 
-## Сборка с Conan (опционально)
+## Сборка с Conan (рекомендуемый способ)
 
-Conan 2.x используется для генерации CMake toolchain (зависимости Qt через ConanCenter
-пока отключены — см. `conanfile.py`). Требуется `conan` 2.x в `PATH`.
+Conan 2.x управляет зависимостью логирования: `spdlog/1.14.1` берётся из ConanCenter
+(см. `conanfile.py`). Qt ставится отдельно через `aqtinstall` и находится по
+`CMAKE_PREFIX_PATH` (зависимость Qt через ConanCenter пока отключена). Требуется
+`conan` 2.x в `PATH`.
 
 ```bash
 # Профиль зафиксирован в репозитории: profiles/clang18 (Linux x86_64, Clang 18, Debug)
-conan install . -of build/conan --build=missing -pr profiles/clang18
+conan install . -of build/conan --build=missing \
+    -pr:b profiles/clang18 -pr profiles/clang18
 
 CC=clang-18 CXX=clang++-18 cmake -S . -B build \
     -DCONAN_BUILD_DIR=build/conan \

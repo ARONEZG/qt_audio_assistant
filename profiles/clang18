@@ -5,7 +5,7 @@
 # project() via include() (see CMakeLists.txt).
 #
 # Usage:
-#   conan install . -of build/conan --build=missing -pr profiles/clang18
+#   conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
 [settings]
 os=Linux
