@@ -5,7 +5,8 @@ out/
 
 # IDE
 .idea/
-.vscode/
+# VS Code: общая конфигурация (.vscode/) коммитится — сборка, отладка,
+# clang-format и clang-tidy должны работать на любой машине из клона.
 *.swp
 *.swo
 *~
