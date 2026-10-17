@@ -408,6 +408,33 @@ audio_assistant_add_domain_test(tst_chats
     tests/FakeProvider.h
 )
 
+# ── Audio smoke test ────────────────────────────────────────
+# Proves the miniaudio dependency configures, compiles and links (see the test
+# file header for the exact scope) without touching a real audio device.
+qt_add_executable(tst_audio_smoke
+    tests/tst_audio_smoke.cpp
+)
+
+set_target_properties(tst_audio_smoke PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+# miniaudio::miniaudio is linked explicitly so the test's own <miniaudio.h>
+# include is resolved as SYSTEM, exactly like the project targets; the
+# implementation symbols come from audio-assistant-audio.
+target_link_libraries(tst_audio_smoke PRIVATE
+    audio-assistant-strict
+    audio-assistant-audio
+    miniaudio::miniaudio
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_audio_smoke COMMAND tst_audio_smoke)
+set_tests_properties(tst_audio_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
 qt_add_executable(tst_main
     tests/tst_main.cpp
 )
