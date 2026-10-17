@@ -7,7 +7,13 @@ namespace audio {
 // The sample encoding of a single PCM value. Only 32-bit float is defined
 // today: the capture contracts normalise every source to f32 in [-1, 1], so the
 // downstream ring buffer and transcriber never have to branch on the encoding.
-enum class SampleFormat : std::uint8_t {
+//
+// The underlying type is the default int on purpose. Narrowing it to a 1-byte
+// type would not shrink AudioFormat: the two uint32 members already force 12
+// bytes of size/alignment and a narrow enum would only introduce 3 bytes of tail
+// padding, so performance-enum-size's advice buys nothing here.
+// NOLINTNEXTLINE(performance-enum-size)
+enum class SampleFormat {
     kFloat32,
 };
 

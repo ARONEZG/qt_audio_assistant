@@ -303,12 +303,11 @@ target_include_directories(audio-assistant-audio PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
 )
 
-# audio-assistant-qt-warnings carries the -Wno-padded suppression: SampleFormat
-# deliberately uses a 1-byte enum (performance-enum-size), which leaves 3 bytes
-# of tail padding in the value object. The layout is never serialized, memcpy'd
-# or exposed as an ABI, so the padding is not a defect. miniaudio.h stays SYSTEM.
+# audio-assistant-qt-warnings is deliberately not linked here: the audio
+# contracts are STL-only and must not inherit Qt/moc-specific suppressions that
+# could hide real diagnostics in future capture code. miniaudio.h stays SYSTEM.
 target_link_libraries(audio-assistant-audio
-    PRIVATE audio-assistant-strict audio-assistant-qt-warnings miniaudio::miniaudio
+    PRIVATE audio-assistant-strict miniaudio::miniaudio
 )
 
 # ── Domain library ──────────────────────────────────────────
@@ -520,7 +519,6 @@ set_target_properties(tst_audioformat PROPERTIES
 
 target_link_libraries(tst_audioformat PRIVATE
     audio-assistant-strict
-    audio-assistant-qt-warnings
     audio-assistant-audio
     Qt6::Core
     Qt6::Test
