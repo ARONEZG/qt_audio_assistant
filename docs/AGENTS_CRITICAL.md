@@ -8,8 +8,10 @@
 
 - Каждое значимое изменение — в отдельной ветке от актуальной `main`
   (`feature/...`, `fix/...`, `chore/...`).
-- Прямые коммиты и пуши в `main`/`master` запрещены и блокируются git-hook'ами
-  (см. `scripts/setup-git-hooks.sh`). Обход — только `--no-verify` в исключительном случае.
+- Прямые коммиты и пуши в `main`/`master` запрещены и блокируются git-hook'ами:
+  `.githooks/pre-commit` (guard + quality-проверки pre-commit framework) и
+  `.githooks/pre-push` (guard пуша). Активация — `scripts/setup-git-hooks.sh`.
+  Обход — только `--no-verify` в исключительном случае.
 
 ## Доставка (часть Definition of Done)
 

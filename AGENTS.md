@@ -94,11 +94,14 @@ Android — запланирован, но не в текущем скоупе.
 ### Техническое принуждение изоляции
 
 Прямые коммиты и пуши в `main`/`master` блокируются git-hook'ами
-(`.githooks/pre-commit`, `.githooks/pre-push`). Активация — один раз на клон:
+(`.githooks/pre-commit`, `.githooks/pre-push`). `.githooks/pre-commit` также
+делегирует quality-проверки (clang-format, qmlformat, qmllint и др.) в
+pre-commit framework. Активация — один раз на клон:
 
     scripts/setup-git-hooks.sh
 
-Обход — только `--no-verify` в исключительном случае.
+Обход — только `--no-verify` в исключительном случае. `pre-commit install`
+в этом репозитории не использовать (см. `.pre-commit-config.yaml`).
 
 ### Автоматический push и pull request
 
