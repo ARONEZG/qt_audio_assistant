@@ -170,13 +170,6 @@ jobs:
           cd build-debug
           ctest --output-on-failure -j$(nproc)
 
-      - name: Upload build directory (for static analysis)
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-build
-          path: build-debug/
-          if-no-files-found: warn
-
   # ──────────────────────────────────────────────────────────────
   # 3. Release build + tests
   # ──────────────────────────────────────────────────────────────
@@ -244,29 +237,21 @@ jobs:
   # ──────────────────────────────────────────────────────────────
   static-analysis:
     name: "Static Analysis"
-    needs: build-and-test-debug
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download compile_commands.json
-        uses: actions/download-artifact@v4
-        with:
-          name: debug-build
-          path: build-debug
-
-      - name: Install analysis tools
+      - name: Install dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
+            clang-18 \
+            ninja-build \
             clang-tidy-18 \
-            clazy
+            clazy \
+            libgl1-mesa-dev
 
-      # clang-tidy parses compile_commands.json from the debug-build artifact,
-      # whose Qt include paths point at $HOME/Qt/6.8.3/gcc_64 — install the same
-      # Qt here so those headers resolve (LLMQore headers live inside the
-      # artifact under build-debug/_deps, Qt headers do not).
       - name: Install Qt ${{ env.QT_VERSION }} (aqtinstall)
         run: |
           if command -v pipx >/dev/null 2>&1; then
@@ -277,6 +262,7 @@ jobs:
           aqt install-qt linux desktop "$QT_VERSION" "$QT_ARCH" \
             -O "$HOME/Qt" \
             --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
+          echo "CMAKE_PREFIX_PATH=$HOME/Qt/$QT_VERSION/gcc_64" >> "$GITHUB_ENV"
 
       - name: Install Conan
         run: |
@@ -287,10 +273,24 @@ jobs:
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # The compile_commands.json from the Debug job points at spdlog headers
-      # inside the Conan cache; install the same Debug packages to restore them.
       - name: Conan install (spdlog)
         run: conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
+
+      # Configure and build Debug here: compile_commands.json and the AUTOMOC
+      # .moc files embed job-local absolute paths (Qt under $HOME, and Conan
+      # package folders whose names are not reproducible across caches), so a
+      # build directory produced by the Debug job cannot be reused here.
+      - name: Configure (Debug)
+        run: |
+          CC=clang-18 CXX=clang++-18 \
+            cmake -S . -B build-debug \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -DCONAN_BUILD_DIR=build/conan
+
+      - name: Build (Debug)
+        run: cmake --build build-debug -j$(nproc)
 
       - name: clang-tidy
         run: |
