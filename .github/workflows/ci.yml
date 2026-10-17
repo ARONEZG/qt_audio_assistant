@@ -4,6 +4,11 @@ name: CI — Quality Gates
 #   clang-format → qmlformat/qmllint → Debug/Release build → tests →
 #   static analysis (clang-tidy, clazy) → sanitizers → coverage.
 #
+# Qt is not taken from the system packages (ubuntu-24.04 ships 6.4.2, which is
+# below the project minimum of 6.8.3). Every job installs Qt 6.8.3 per user
+# with aqtinstall into $HOME/Qt and points CMake at it explicitly; this mirrors
+# the local developer setup (see conanfile.py).
+#
 # Runs on push to main, PR to main, and manually.
 # Free for public repos; 2000 min/month for private repos.
 
@@ -22,6 +27,10 @@ env:
   CCACHE_DIR: /tmp/ccache
   CCACHE_COMPRESS: true
   CCACHE_MAXSIZE: 200M
+  # Single source of truth for the Qt version; keep in sync with the
+  # find_package(Qt6 …) call in CMakeLists.txt.
+  QT_VERSION: 6.8.3
+  QT_ARCH: linux_gcc_64
 
 jobs:
   # ──────────────────────────────────────────────────────────────
@@ -30,26 +39,28 @@ jobs:
   format-and-qml:
     name: "Format + QML checks"
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install clang-format and Qt6 QML tools
+      - name: Install clang-format
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            clang-format-18 \
-            qt6-declarative-dev \
-            qt6-declarative-dev-tools \
-            qml6-module-qtquick \
-            qml6-module-qtquick-controls \
-            qml6-module-qtquick-layouts \
-            qml6-module-qtquick-templates \
-            qml6-module-qtquick-window \
-            qml6-module-qtquick-nativestyle \
-            qml6-module-qtqml \
-            qml6-module-qtqml-models \
-            qml6-module-qtqml-workerscript
+          sudo apt-get install -y -qq clang-format-18
+
+      # Qt is installed with aqtinstall (not apt): qmlformat/qmllint then come
+      # from the same Qt 6.8.3 the application builds against.
+      - name: Install Qt ${{ env.QT_VERSION }} (aqtinstall)
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install aqtinstall
+          else
+            python3 -m pip install --user --break-system-packages aqtinstall
+          fi
+          aqt install-qt linux desktop "$QT_VERSION" "$QT_ARCH" \
+            -O "$HOME/Qt" \
+            --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
+          echo "$HOME/Qt/$QT_VERSION/gcc_64/bin" >> "$GITHUB_PATH"
 
       - name: clang-format (dry-run, --Werror)
         run: |
@@ -68,7 +79,7 @@ jobs:
             exit 0
           fi
           for f in $qml_files; do
-            /usr/lib/qt6/bin/qmlformat "$f" | diff -q "$f" - || {
+            qmlformat "$f" | diff -q "$f" - || {
               echo "qmlformat would modify $f"
               exit 1
             }
@@ -81,7 +92,7 @@ jobs:
             echo "No QML files found"
             exit 0
           fi
-          /usr/lib/qt6/bin/qmllint $qml_files
+          qmllint $qml_files
 
   # ──────────────────────────────────────────────────────────────
   # 2. Debug build + tests
@@ -89,7 +100,7 @@ jobs:
   build-and-test-debug:
     name: "Debug build + tests"
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -100,18 +111,19 @@ jobs:
             clang-18 \
             ninja-build \
             ccache \
-            qt6-base-dev \
-            qt6-declarative-dev \
-            qt6-tools-dev \
-            qml6-module-qtquick \
-            qml6-module-qtquick-controls \
-            qml6-module-qtquick-layouts \
-            qml6-module-qtquick-templates \
-            qml6-module-qtquick-window \
-            qml6-module-qtquick-nativestyle \
-            qml6-module-qtqml \
-            qml6-module-qtqml-models \
-            qml6-module-qtqml-workerscript
+            libgl1-mesa-dev
+
+      - name: Install Qt ${{ env.QT_VERSION }} (aqtinstall)
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install aqtinstall
+          else
+            python3 -m pip install --user --break-system-packages aqtinstall
+          fi
+          aqt install-qt linux desktop "$QT_VERSION" "$QT_ARCH" \
+            -O "$HOME/Qt" \
+            --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
+          echo "CMAKE_PREFIX_PATH=$HOME/Qt/$QT_VERSION/gcc_64" >> "$GITHUB_ENV"
 
       - name: Setup ccache
         uses: actions/cache@v4
@@ -128,6 +140,7 @@ jobs:
             cmake -S . -B build-debug \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
@@ -152,7 +165,7 @@ jobs:
   build-and-test-release:
     name: "Release build + tests"
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -162,24 +175,27 @@ jobs:
           sudo apt-get install -y -qq \
             clang-18 \
             ninja-build \
-            qt6-base-dev \
-            qt6-declarative-dev \
-            qt6-tools-dev \
-            qml6-module-qtquick \
-            qml6-module-qtquick-controls \
-            qml6-module-qtquick-layouts \
-            qml6-module-qtquick-templates \
-            qml6-module-qtquick-window \
-            qml6-module-qtquick-nativestyle \
-            qml6-module-qtqml-models \
-            qml6-module-qtqml-workerscript
+            libgl1-mesa-dev
+
+      - name: Install Qt ${{ env.QT_VERSION }} (aqtinstall)
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install aqtinstall
+          else
+            python3 -m pip install --user --break-system-packages aqtinstall
+          fi
+          aqt install-qt linux desktop "$QT_VERSION" "$QT_ARCH" \
+            -O "$HOME/Qt" \
+            --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
+          echo "CMAKE_PREFIX_PATH=$HOME/Qt/$QT_VERSION/gcc_64" >> "$GITHUB_ENV"
 
       - name: Configure (Release)
         run: |
           CC=clang-18 CXX=clang++-18 \
             cmake -S . -B build-release \
             -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"
 
       - name: Build (Release)
         run: cmake --build build-release -j$(nproc)
@@ -196,7 +212,7 @@ jobs:
     name: "Static Analysis"
     needs: build-and-test-debug
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -211,9 +227,22 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             clang-tidy-18 \
-            clazy \
-            qt6-base-dev \
-            qt6-declarative-dev
+            clazy
+
+      # clang-tidy parses compile_commands.json from the debug-build artifact,
+      # whose Qt include paths point at $HOME/Qt/6.8.3/gcc_64 — install the same
+      # Qt here so those headers resolve (LLMQore headers live inside the
+      # artifact under build-debug/_deps, Qt headers do not).
+      - name: Install Qt ${{ env.QT_VERSION }} (aqtinstall)
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install aqtinstall
+          else
+            python3 -m pip install --user --break-system-packages aqtinstall
+          fi
+          aqt install-qt linux desktop "$QT_VERSION" "$QT_ARCH" \
+            -O "$HOME/Qt" \
+            --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
 
       - name: clang-tidy
         run: |
@@ -261,7 +290,7 @@ jobs:
   sanitizers:
     name: "ASan + UBSan"
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -271,17 +300,19 @@ jobs:
           sudo apt-get install -y -qq \
             clang-18 \
             ninja-build \
-            qt6-base-dev \
-            qt6-declarative-dev \
-            qt6-tools-dev \
-            qml6-module-qtquick \
-            qml6-module-qtquick-controls \
-            qml6-module-qtquick-layouts \
-            qml6-module-qtquick-templates \
-            qml6-module-qtquick-window \
-            qml6-module-qtquick-nativestyle \
-            qml6-module-qtqml-models \
-            qml6-module-qtqml-workerscript
+            libgl1-mesa-dev
+
+      - name: Install Qt ${{ env.QT_VERSION }} (aqtinstall)
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install aqtinstall
+          else
+            python3 -m pip install --user --break-system-packages aqtinstall
+          fi
+          aqt install-qt linux desktop "$QT_VERSION" "$QT_ARCH" \
+            -O "$HOME/Qt" \
+            --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
+          echo "CMAKE_PREFIX_PATH=$HOME/Qt/$QT_VERSION/gcc_64" >> "$GITHUB_ENV"
 
       - name: Configure (ASan + UBSan)
         run: |
@@ -289,6 +320,7 @@ jobs:
             cmake -S . -B build-asan \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
             -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
@@ -310,7 +342,7 @@ jobs:
   coverage:
     name: "Coverage"
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -321,17 +353,19 @@ jobs:
             clang-18 \
             ninja-build \
             llvm-18-tools \
-            qt6-base-dev \
-            qt6-declarative-dev \
-            qt6-tools-dev \
-            qml6-module-qtquick \
-            qml6-module-qtquick-controls \
-            qml6-module-qtquick-layouts \
-            qml6-module-qtquick-templates \
-            qml6-module-qtquick-window \
-            qml6-module-qtquick-nativestyle \
-            qml6-module-qtqml-models \
-            qml6-module-qtqml-workerscript
+            libgl1-mesa-dev
+
+      - name: Install Qt ${{ env.QT_VERSION }} (aqtinstall)
+        run: |
+          if command -v pipx >/dev/null 2>&1; then
+            pipx install aqtinstall
+          else
+            python3 -m pip install --user --break-system-packages aqtinstall
+          fi
+          aqt install-qt linux desktop "$QT_VERSION" "$QT_ARCH" \
+            -O "$HOME/Qt" \
+            --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
+          echo "CMAKE_PREFIX_PATH=$HOME/Qt/$QT_VERSION/gcc_64" >> "$GITHUB_ENV"
 
       - name: Configure (coverage)
         run: |
@@ -339,6 +373,7 @@ jobs:
             cmake -S . -B build-cov \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
             -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
             -DCMAKE_C_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
             -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \

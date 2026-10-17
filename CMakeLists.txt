@@ -94,9 +94,11 @@ if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 # ── Qt 6 components ─────────────────────────────────────────
-# Qt 6.4.2 is the single source of truth for the Qt version; it must stay in
-# sync with `requires = "qt/6.4.2"` in conanfile.py.
-find_package(Qt6 6.4.2 REQUIRED COMPONENTS
+# Qt 6.8.3 is the single source of truth for the Qt version. It is provided by
+# aqtinstall (see conanfile.py), not by the system packages; point CMake at it
+# with -DCMAKE_PREFIX_PATH=$HOME/Qt/6.8.3/gcc_64 (the path is deliberately not
+# hardcoded here).
+find_package(Qt6 6.8.3 REQUIRED COMPONENTS
     Core
     Gui
     Qml
@@ -107,6 +109,22 @@ find_package(Qt6 6.4.2 REQUIRED COMPONENTS
 find_package(Qt6 REQUIRED COMPONENTS
     Test
 )
+
+# ── LLMQore (LLM client library) ────────────────────────────
+# Pinned to the released tag v0.8.0 (MIT). Fetched as a SYSTEM subproject so
+# its headers are consumed as system headers and its own warning settings do
+# not leak into project targets. Only build-time auxiliary targets are forced
+# off; the library itself is linked PRIVATE into the executable.
+include(FetchContent)
+set(LLMQORE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLMQORE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLMQORE_BUILD_MCP_BRIDGE OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(LLMQore
+    SYSTEM
+    GIT_REPOSITORY https://github.com/Palm1r/llmqore.git
+    GIT_TAG v0.8.0
+)
+FetchContent_MakeAvailable(LLMQore)
 
 # ── QML module ──────────────────────────────────────────────
 # Put Main.qml at the root of the module resources (default behaviour
@@ -157,6 +175,9 @@ target_link_libraries(audio-assistant PRIVATE
     Qt6::Gui
     Qt6::Qml
     Qt6::QuickControls2
+    # Linked to prove the FetchContent integration builds and links end-to-end.
+    # No LLMQore header is included yet; usage code arrives with the feature task.
+    LLMQore::LLMQore
 )
 
 # ── Tests ───────────────────────────────────────────────────
