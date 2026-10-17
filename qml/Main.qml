@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 ApplicationWindow {
     title: "Audio Assistant"
+    visible: true
     minimumWidth: 480
     minimumHeight: 320
     width: 640
