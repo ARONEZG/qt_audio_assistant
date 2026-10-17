@@ -31,7 +31,7 @@ private slots:
     void test_cancelWithoutStreamingIsNoOp();
     void test_sequentialSendsPreserveHistory();
     void test_historyIsPassedToProvider();
-    void test_emptyTextIsAccepted();
+    void test_emptyTextIsIgnored();
     void test_providerDestroyingAnswerResetsStreaming();
     void test_modelExposesMessageRoles();
     void test_modelInsertsUserMessageRow();
@@ -238,17 +238,17 @@ void TestChat::test_historyIsPassedToProvider() {
     QCOMPARE(history.at(2).role(), MessageRole::kUser);
 }
 
-void TestChat::test_emptyTextIsAccepted() {
+void TestChat::test_emptyTextIsIgnored() {
     auto provider = std::make_unique<FakeProvider>();
     FakeProvider* fake = provider.get();
     Chat chat(std::move(provider));
 
     chat.send(QString());
 
-    QCOMPARE(chat.messages().size(), std::size_t{1});
-    QCOMPARE(chat.messages().at(0).text(), QString());
-    QCOMPARE(chat.isStreaming(), true);
-    QCOMPARE(fake->respondCount(), 1);
+    QCOMPARE(chat.messages().size(), std::size_t{0});
+    QCOMPARE(chat.isStreaming(), false);
+    QCOMPARE(chat.rowCount(), 0);
+    QCOMPARE(fake->respondCount(), 0);
 }
 
 void TestChat::test_providerDestroyingAnswerResetsStreaming() {

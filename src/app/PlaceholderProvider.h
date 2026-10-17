@@ -14,9 +14,9 @@
 // so the composition root in main() has something to wire into the grid, and it
 // is labelled as such in its display name.
 //
-// It answers by echoing the last user message back, chunk by chunk, from the
-// event loop - so it respects the Provider contract (respond() returns
-// immediately, the Answer is fed later) instead of completing synchronously.
+// It answers by echoing the last user message back from the event loop - so it
+// respects the Provider contract (respond() returns immediately, the Answer is
+// fed later) instead of completing synchronously.
 class PlaceholderProvider : public Provider {
     Q_OBJECT
     Q_DISABLE_COPY_MOVE(PlaceholderProvider)
@@ -28,7 +28,4 @@ public:
     [[nodiscard]] QString id() const override;
     [[nodiscard]] QString displayName() const override;
     Answer* respond(const std::vector<Message>& history) override;
-
-private:
-    static QString replyTo(const std::vector<Message>& history);
 };

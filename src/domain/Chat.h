@@ -67,8 +67,10 @@ public:
     [[nodiscard]] QString providerName() const;
 
     // Appends a user message and asks the provider to answer. Ignored while an
-    // answer is already streaming (one in-flight answer per chat). Invokable so
-    // the QML layer can call it without extra glue.
+    // answer is already streaming (one in-flight answer per chat) and for empty
+    // text (a blank message is meaningless); the invariant lives here, so the
+    // view does not have to filter it. Invokable so the QML layer can call it
+    // without extra glue.
     Q_INVOKABLE void send(const QString& text);
     // Abandons the in-flight answer, if any, without appending a reply.
     Q_INVOKABLE void cancel();

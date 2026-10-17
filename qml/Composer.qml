@@ -38,13 +38,9 @@ RowLayout {
         onClicked: root.submit()
     }
 
-    // Trivial intent forwarding: emit the typed text and clear the field. An
-    // empty submission is a no-op so the chat never records a blank message by
-    // accident (the button is disabled for it; Enter goes through here).
+    // Trivial intent forwarding: emit the typed text and clear the field. The
+    // domain ignores an empty message (Chat::send), so no guard is needed here.
     function submit() {
-        if (input.text.length === 0) {
-            return;
-        }
         root.submitted(input.text);
         input.clear();
     }

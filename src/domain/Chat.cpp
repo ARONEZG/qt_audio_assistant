@@ -73,7 +73,7 @@ QString Chat::providerName() const {
 }
 
 void Chat::send(const QString& text) {
-    if (isStreaming_) {
+    if (isStreaming_ || text.isEmpty()) {
         return;
     }
     appendMessage(Message(MessageRole::kUser, text));
