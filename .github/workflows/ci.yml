@@ -44,6 +44,9 @@ jobs:
             qml6-module-qtquick-controls \
             qml6-module-qtquick-layouts \
             qml6-module-qtquick-templates \
+            qml6-module-qtquick-window \
+            qml6-module-qtquick-nativestyle \
+            qml6-module-qtqml-models \
             qml6-module-qtqml-workerscript
 
       - name: clang-format (dry-run, --Werror)
@@ -102,6 +105,9 @@ jobs:
             qml6-module-qtquick-controls \
             qml6-module-qtquick-layouts \
             qml6-module-qtquick-templates \
+            qml6-module-qtquick-window \
+            qml6-module-qtquick-nativestyle \
+            qml6-module-qtqml-models \
             qml6-module-qtqml-workerscript
 
       - name: Setup ccache
@@ -160,6 +166,9 @@ jobs:
             qml6-module-qtquick-controls \
             qml6-module-qtquick-layouts \
             qml6-module-qtquick-templates \
+            qml6-module-qtquick-window \
+            qml6-module-qtquick-nativestyle \
+            qml6-module-qtqml-models \
             qml6-module-qtqml-workerscript
 
       - name: Configure (Release)
@@ -257,6 +266,9 @@ jobs:
             qml6-module-qtquick-controls \
             qml6-module-qtquick-layouts \
             qml6-module-qtquick-templates \
+            qml6-module-qtquick-window \
+            qml6-module-qtquick-nativestyle \
+            qml6-module-qtqml-models \
             qml6-module-qtqml-workerscript
 
       - name: Configure (ASan + UBSan)
@@ -304,6 +316,9 @@ jobs:
             qml6-module-qtquick-controls \
             qml6-module-qtquick-layouts \
             qml6-module-qtquick-templates \
+            qml6-module-qtquick-window \
+            qml6-module-qtquick-nativestyle \
+            qml6-module-qtqml-models \
             qml6-module-qtqml-workerscript
 
       - name: Configure (coverage)
