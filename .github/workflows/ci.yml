@@ -42,7 +42,8 @@ jobs:
             qt6-declarative-dev-tools \
             qml6-module-qtquick \
             qml6-module-qtquick-controls \
-            qml6-module-qtquick-layouts
+            qml6-module-qtquick-layouts \
+            qml6-module-qtqml-workerscript
 
       - name: clang-format (dry-run, --Werror)
         run: |
@@ -98,7 +99,8 @@ jobs:
             qt6-tools-dev \
             qml6-module-qtquick \
             qml6-module-qtquick-controls \
-            qml6-module-qtquick-layouts
+            qml6-module-qtquick-layouts \
+            qml6-module-qtqml-workerscript
 
       - name: Setup ccache
         uses: actions/cache@v4
@@ -154,7 +156,8 @@ jobs:
             qt6-tools-dev \
             qml6-module-qtquick \
             qml6-module-qtquick-controls \
-            qml6-module-qtquick-layouts
+            qml6-module-qtquick-layouts \
+            qml6-module-qtqml-workerscript
 
       - name: Configure (Release)
         run: |
@@ -249,7 +252,8 @@ jobs:
             qt6-tools-dev \
             qml6-module-qtquick \
             qml6-module-qtquick-controls \
-            qml6-module-qtquick-layouts
+            qml6-module-qtquick-layouts \
+            qml6-module-qtqml-workerscript
 
       - name: Configure (ASan + UBSan)
         run: |
@@ -294,7 +298,8 @@ jobs:
             qt6-tools-dev \
             qml6-module-qtquick \
             qml6-module-qtquick-controls \
-            qml6-module-qtquick-layouts
+            qml6-module-qtquick-layouts \
+            qml6-module-qtqml-workerscript
 
       - name: Configure (coverage)
         run: |
