@@ -13,6 +13,10 @@ const QString& Message::text() const noexcept {
     return text_;
 }
 
+bool Message::isUser() const noexcept {
+    return role_ == MessageRole::kUser;
+}
+
 bool Message::operator==(const Message& other) const {
     return role_ == other.role_ && text_ == other.text_;
 }

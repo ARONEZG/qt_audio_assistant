@@ -1,3 +1,5 @@
+#include <QByteArray>
+#include <QModelIndex>
 #include <QSignalSpy>
 #include <QString>
 #include <QtTest>
@@ -26,10 +28,16 @@ private slots:
     void test_cancelResetsStreamingWithoutReply();
     void test_failResetsStreamingAndEmitsFailed();
     void test_sendWhileStreamingIsIgnored();
+    void test_cancelWithoutStreamingIsNoOp();
     void test_sequentialSendsPreserveHistory();
     void test_historyIsPassedToProvider();
-    void test_emptyTextIsAccepted();
+    void test_emptyTextIsIgnored();
     void test_providerDestroyingAnswerResetsStreaming();
+    void test_modelExposesMessageRoles();
+    void test_modelInsertsUserMessageRow();
+    void test_modelInsertsReplyRow();
+    void test_modelIgnoresUnknownRoleAndOutOfRangeRow();
+    void test_streamingTextIsNotAModelRow();
 };
 
 TestChat::TestChat(QObject* parent) : QObject(parent) {
@@ -174,6 +182,22 @@ void TestChat::test_sendWhileStreamingIsIgnored() {
     QCOMPARE(fake->respondCount(), 1);
 }
 
+void TestChat::test_cancelWithoutStreamingIsNoOp() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    const QSignalSpy kStateSpy(&chat, &Chat::stateChanged);
+    const QSignalSpy kCancelledSpy(&chat, &Chat::cancelled);
+
+    chat.cancel();
+
+    QCOMPARE(chat.isStreaming(), false);
+    QCOMPARE(chat.messages().size(), std::size_t{0});
+    QCOMPARE(kCancelledSpy.count(), 0);
+    QCOMPARE(kStateSpy.count(), 0);
+    QCOMPARE(fake->respondCount(), 0);
+}
+
 void TestChat::test_sequentialSendsPreserveHistory() {
     auto provider = std::make_unique<FakeProvider>();
     FakeProvider* fake = provider.get();
@@ -214,17 +238,17 @@ void TestChat::test_historyIsPassedToProvider() {
     QCOMPARE(history.at(2).role(), MessageRole::kUser);
 }
 
-void TestChat::test_emptyTextIsAccepted() {
+void TestChat::test_emptyTextIsIgnored() {
     auto provider = std::make_unique<FakeProvider>();
     FakeProvider* fake = provider.get();
     Chat chat(std::move(provider));
 
     chat.send(QString());
 
-    QCOMPARE(chat.messages().size(), std::size_t{1});
-    QCOMPARE(chat.messages().at(0).text(), QString());
-    QCOMPARE(chat.isStreaming(), true);
-    QCOMPARE(fake->respondCount(), 1);
+    QCOMPARE(chat.messages().size(), std::size_t{0});
+    QCOMPARE(chat.isStreaming(), false);
+    QCOMPARE(chat.rowCount(), 0);
+    QCOMPARE(fake->respondCount(), 0);
 }
 
 void TestChat::test_providerDestroyingAnswerResetsStreaming() {
@@ -246,6 +270,76 @@ void TestChat::test_providerDestroyingAnswerResetsStreaming() {
     chat.send(QStringLiteral("again"));
     QCOMPARE(chat.isStreaming(), true);
     QCOMPARE(chat.messages().size(), std::size_t{2});
+}
+
+void TestChat::test_modelExposesMessageRoles() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    fake->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("hello")));
+
+    QCOMPARE(chat.roleNames().value(Chat::kTextRole), QByteArrayLiteral("text"));
+    QCOMPARE(chat.roleNames().value(Chat::kIsUserRole), QByteArrayLiteral("isUser"));
+    QCOMPARE(chat.data(chat.index(0), Chat::kTextRole).toString(), QStringLiteral("hi"));
+    QCOMPARE(chat.data(chat.index(0), Chat::kIsUserRole).toBool(), true);
+    QCOMPARE(chat.data(chat.index(1), Chat::kTextRole).toString(), QStringLiteral("hello"));
+    QCOMPARE(chat.data(chat.index(1), Chat::kIsUserRole).toBool(), false);
+}
+
+void TestChat::test_modelInsertsUserMessageRow() {
+    auto provider = std::make_unique<FakeProvider>();
+    Chat chat(std::move(provider));
+    const QSignalSpy kInsertedSpy(&chat, &Chat::rowsInserted);
+
+    chat.send(QStringLiteral("hi"));
+
+    QCOMPARE(kInsertedSpy.count(), 1);
+    QCOMPARE(kInsertedSpy.at(0).at(1).toInt(), 0);
+    QCOMPARE(kInsertedSpy.at(0).at(2).toInt(), 0);
+    QCOMPARE(chat.rowCount(), 1);
+}
+
+void TestChat::test_modelInsertsReplyRow() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    const QSignalSpy kInsertedSpy(&chat, &Chat::rowsInserted);
+
+    fake->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("hello")));
+
+    QCOMPARE(kInsertedSpy.count(), 1);
+    QCOMPARE(kInsertedSpy.at(0).at(1).toInt(), 1);
+    QCOMPARE(kInsertedSpy.at(0).at(2).toInt(), 1);
+    QCOMPARE(chat.rowCount(), 2);
+    QCOMPARE(chat.data(chat.index(1), Chat::kTextRole).toString(), QStringLiteral("hello"));
+}
+
+void TestChat::test_modelIgnoresUnknownRoleAndOutOfRangeRow() {
+    auto provider = std::make_unique<FakeProvider>();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+
+    QVERIFY(!chat.data(chat.index(0), Qt::DisplayRole).isValid());
+    QVERIFY(!chat.data(QModelIndex(), Chat::kTextRole).isValid());
+    QVERIFY(!chat.data(chat.index(1), Chat::kTextRole).isValid());
+    QCOMPARE(chat.rowCount(chat.index(0)), 0);
+}
+
+void TestChat::test_streamingTextIsNotAModelRow() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+
+    fake->lastAnswer()->appendChunk(QStringLiteral("partial"));
+
+    // The live reply never touches the history: only the user message is a row,
+    // and the streaming text is exposed as its own property.
+    QCOMPARE(chat.rowCount(), 1);
+    QCOMPARE(chat.data(chat.index(0), Chat::kIsUserRole).toBool(), true);
+    QCOMPARE(chat.streamingText(), QStringLiteral("partial"));
 }
 
 QTEST_GUILESS_MAIN(TestChat)
