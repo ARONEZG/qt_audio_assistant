@@ -30,7 +30,9 @@ public:
         kDisplayNameRole,
     };
 
-    // Ids must be unique: fresh() resolves an offer by id.
+    // Ids must be unique: fresh() resolves an offer by id. Duplicates are a
+    // composition-root mistake: debug builds assert, release builds resolve to
+    // the first matching offer.
     explicit Providers(std::vector<ProviderOffer> offers, QObject* parent = nullptr);
     ~Providers() override;
 
@@ -40,14 +42,16 @@ public:
 
     [[nodiscard]] int count() const noexcept;
     [[nodiscard]] bool contains(const QString& id) const;
-    // Precondition: index is in range (checked in debug builds), like any
-    // container accessor.
+    // Queries by row are total: an out-of-range index yields "nothing" (a null
+    // QString, QString::isNull()) rather than undefined behaviour, so a stale row
+    // from a view can never crash the model.
     [[nodiscard]] QString idAt(int index) const;
     [[nodiscard]] QString displayNameAt(int index) const;
 
     // Mints a fresh instance of the offered provider and passes its ownership to
-    // the caller (normally straight into Chats::add). A null result means the id
-    // is not offered at all - not an "empty provider".
+    // the caller (normally straight into Chats::add). Returns nullptr when the id
+    // is not offered at all, or when the offer's recipe could not build a
+    // provider - in both cases there is simply no provider, never an "empty" one.
     [[nodiscard]] std::unique_ptr<Provider> fresh(const QString& id) const;
 
 private:

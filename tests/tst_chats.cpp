@@ -34,6 +34,10 @@ ProviderOffer recordingOffer(const QString& id, std::vector<FakeProvider*>& mint
             }};
 }
 
+Providers singleFakeOffer() {
+    return Providers({offerOf(QStringLiteral("fake"), QStringLiteral("Fake Provider"))});
+}
+
 }  // namespace
 
 class TestChats : public QObject {
@@ -46,6 +50,9 @@ private slots:
     void test_emptyGridHasNoRows();
     void test_addCreatesOwnedChat();
     void test_addInsertsOneRow();
+    void test_addRejectsNullProvider();
+    void test_addRejectsProviderOfAnUnknownId();
+    void test_atOutOfRangeIsNothing();
     void test_rowCountIgnoresChildren();
     void test_addedChatsKeepInsertionOrder();
     void test_removeDropsTheChat();
@@ -71,7 +78,7 @@ void TestChats::test_emptyGridHasNoRows() {
 }
 
 void TestChats::test_addCreatesOwnedChat() {
-    const Providers kProviders({offerOf(QStringLiteral("fake"), QStringLiteral("Fake Provider"))});
+    const Providers kProviders(singleFakeOffer());
     Chats chats;
 
     Chat* chat = chats.add(kProviders.fresh(QStringLiteral("fake")));
@@ -85,11 +92,11 @@ void TestChats::test_addCreatesOwnedChat() {
 }
 
 void TestChats::test_addInsertsOneRow() {
-    const Providers kProviders({offerOf(QStringLiteral("fake"), QStringLiteral("Fake Provider"))});
+    const Providers kProviders(singleFakeOffer());
     Chats chats;
     const QSignalSpy kInsertedSpy(&chats, &Chats::rowsInserted);
 
-    chats.add(kProviders.fresh(QStringLiteral("fake")));
+    QVERIFY(chats.add(kProviders.fresh(QStringLiteral("fake"))) != nullptr);
 
     QCOMPARE(kInsertedSpy.count(), 1);
     QCOMPARE(kInsertedSpy.at(0).at(1).toInt(), 0);
@@ -98,10 +105,42 @@ void TestChats::test_addInsertsOneRow() {
     QCOMPARE(chats.rowCount(), 1);
 }
 
-void TestChats::test_rowCountIgnoresChildren() {
-    const Providers kProviders({offerOf(QStringLiteral("fake"), QStringLiteral("Fake Provider"))});
+void TestChats::test_addRejectsNullProvider() {
     Chats chats;
-    chats.add(kProviders.fresh(QStringLiteral("fake")));
+    const QSignalSpy kInsertedSpy(&chats, &Chats::rowsInserted);
+
+    QVERIFY(chats.add(nullptr) == nullptr);
+
+    QCOMPARE(chats.count(), 0);
+    QCOMPARE(kInsertedSpy.count(), 0);
+}
+
+void TestChats::test_addRejectsProviderOfAnUnknownId() {
+    const Providers kProviders(singleFakeOffer());
+    Chats chats;
+    const QSignalSpy kInsertedSpy(&chats, &Chats::rowsInserted);
+
+    // The id is not offered, so Providers::fresh() has no provider to hand over.
+    QVERIFY(chats.add(kProviders.fresh(QStringLiteral("gone"))) == nullptr);
+
+    QCOMPARE(chats.count(), 0);
+    QCOMPARE(kInsertedSpy.count(), 0);
+}
+
+void TestChats::test_atOutOfRangeIsNothing() {
+    const Providers kProviders(singleFakeOffer());
+    Chats chats;
+    QVERIFY(chats.add(kProviders.fresh(QStringLiteral("fake"))) != nullptr);
+
+    QVERIFY(chats.at(-1) == nullptr);
+    QVERIFY(chats.at(chats.count()) == nullptr);
+    QCOMPARE(chats.count(), 1);
+}
+
+void TestChats::test_rowCountIgnoresChildren() {
+    const Providers kProviders(singleFakeOffer());
+    Chats chats;
+    QVERIFY(chats.add(kProviders.fresh(QStringLiteral("fake"))) != nullptr);
 
     QCOMPARE(chats.rowCount(chats.index(0)), 0);
 }
@@ -111,8 +150,8 @@ void TestChats::test_addedChatsKeepInsertionOrder() {
                                 offerOf(QStringLiteral("beta"), QStringLiteral("Beta"))});
     Chats chats;
 
-    chats.add(kProviders.fresh(QStringLiteral("beta")));
-    chats.add(kProviders.fresh(QStringLiteral("alpha")));
+    QVERIFY(chats.add(kProviders.fresh(QStringLiteral("beta"))) != nullptr);
+    QVERIFY(chats.add(kProviders.fresh(QStringLiteral("alpha"))) != nullptr);
 
     QCOMPARE(chats.count(), 2);
     QCOMPARE(chats.at(0)->providerId(), QStringLiteral("beta"));
@@ -123,8 +162,9 @@ void TestChats::test_removeDropsTheChat() {
     const Providers kProviders({offerOf(QStringLiteral("alpha"), QStringLiteral("Alpha")),
                                 offerOf(QStringLiteral("beta"), QStringLiteral("Beta"))});
     Chats chats;
-    chats.add(kProviders.fresh(QStringLiteral("alpha")));
+    QVERIFY(chats.add(kProviders.fresh(QStringLiteral("alpha"))) != nullptr);
     Chat* second = chats.add(kProviders.fresh(QStringLiteral("beta")));
+    QVERIFY(second != nullptr);
     const QSignalSpy kRemovedSpy(&chats, &Chats::rowsRemoved);
 
     QVERIFY(chats.remove(0));
@@ -138,9 +178,10 @@ void TestChats::test_removeDropsTheChat() {
 }
 
 void TestChats::test_removeDestroysTheChat() {
-    const Providers kProviders({offerOf(QStringLiteral("fake"), QStringLiteral("Fake Provider"))});
+    const Providers kProviders(singleFakeOffer());
     Chats chats;
     Chat* chat = chats.add(kProviders.fresh(QStringLiteral("fake")));
+    QVERIFY(chat != nullptr);
     const QSignalSpy kDestroyedSpy(chat, &QObject::destroyed);
 
     QVERIFY(chats.remove(0));
@@ -149,9 +190,9 @@ void TestChats::test_removeDestroysTheChat() {
 }
 
 void TestChats::test_removeOutOfRangeIsNoOp() {
-    const Providers kProviders({offerOf(QStringLiteral("fake"), QStringLiteral("Fake Provider"))});
+    const Providers kProviders(singleFakeOffer());
     Chats chats;
-    chats.add(kProviders.fresh(QStringLiteral("fake")));
+    QVERIFY(chats.add(kProviders.fresh(QStringLiteral("fake"))) != nullptr);
     const QSignalSpy kRemovedSpy(&chats, &Chats::rowsRemoved);
 
     QCOMPARE(chats.remove(-1), false);
@@ -162,18 +203,19 @@ void TestChats::test_removeOutOfRangeIsNoOp() {
 }
 
 void TestChats::test_modelExposesTheChatOfARow() {
-    const Providers kProviders({offerOf(QStringLiteral("fake"), QStringLiteral("Fake Provider"))});
+    const Providers kProviders(singleFakeOffer());
     Chats chats;
     Chat* chat = chats.add(kProviders.fresh(QStringLiteral("fake")));
+    QVERIFY(chat != nullptr);
 
     QCOMPARE(chats.roleNames().value(Chats::kChatRole), QByteArrayLiteral("chat"));
     QCOMPARE(chats.data(chats.index(0), Chats::kChatRole).value<Chat*>(), chat);
 }
 
 void TestChats::test_modelRejectsUnknownRole() {
-    const Providers kProviders({offerOf(QStringLiteral("fake"), QStringLiteral("Fake Provider"))});
+    const Providers kProviders(singleFakeOffer());
     Chats chats;
-    chats.add(kProviders.fresh(QStringLiteral("fake")));
+    QVERIFY(chats.add(kProviders.fresh(QStringLiteral("fake"))) != nullptr);
 
     QVERIFY(!chats.data(chats.index(0), Qt::DisplayRole).isValid());
 }
@@ -186,12 +228,12 @@ void TestChats::test_modelRejectsInvalidIndex() {
 }
 
 void TestChats::test_modelRejectsIndexOfAnotherModel() {
-    const Providers kProviders({offerOf(QStringLiteral("fake"), QStringLiteral("Fake Provider"))});
+    const Providers kProviders(singleFakeOffer());
     Chats chats;
-    chats.add(kProviders.fresh(QStringLiteral("fake")));
+    QVERIFY(chats.add(kProviders.fresh(QStringLiteral("fake"))) != nullptr);
     Chats other;
-    other.add(kProviders.fresh(QStringLiteral("fake")));
-    other.add(kProviders.fresh(QStringLiteral("fake")));
+    QVERIFY(other.add(kProviders.fresh(QStringLiteral("fake"))) != nullptr);
+    QVERIFY(other.add(kProviders.fresh(QStringLiteral("fake"))) != nullptr);
 
     // A valid index of another model can name a row this model does not have.
     QVERIFY(!chats.data(other.index(1), Chats::kChatRole).isValid());
@@ -204,6 +246,8 @@ void TestChats::test_eachChatOwnsItsOwnProviderInstance() {
 
     Chat* first = chats.add(kProviders.fresh(QStringLiteral("fake")));
     Chat* second = chats.add(kProviders.fresh(QStringLiteral("fake")));
+    QVERIFY(first != nullptr);
+    QVERIFY(second != nullptr);
 
     QCOMPARE(minted.size(), std::size_t{2});
     QVERIFY(minted.at(0) != minted.at(1));
@@ -225,6 +269,7 @@ void TestChats::test_chatStreamsThroughTheProviderItWasGiven() {
     const Providers kProviders({recordingOffer(QStringLiteral("fake"), minted)});
     Chats chats;
     Chat* chat = chats.add(kProviders.fresh(QStringLiteral("fake")));
+    QVERIFY(chat != nullptr);
 
     chat->send(QStringLiteral("hi"));
 

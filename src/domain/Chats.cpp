@@ -17,9 +17,10 @@ int Chats::rowCount(const QModelIndex& parent) const {
 }
 
 QVariant Chats::data(const QModelIndex& index, int role) const {
-    // An invalid index has row() == -1, and an index built by another model can
-    // name a row past the end; both fail the row check, so a list model stays
-    // robust without a second precondition.
+    // A list model is flat: every index it hands out is parentless and in the
+    // single column, so the row check is the whole contract. An invalid index
+    // has row() == -1, and an index built by another model can name a row past
+    // the end; both yield nothing.
     if (!isValidRow(index.row())) {
         return {};
     }
@@ -44,11 +45,16 @@ int Chats::count() const noexcept {
 }
 
 Chat* Chats::at(int index) const {
-    Q_ASSERT(isValidRow(index));
+    if (!isValidRow(index)) {
+        return nullptr;
+    }
     return chats_[static_cast<std::size_t>(index)].get();
 }
 
 Chat* Chats::add(std::unique_ptr<Provider> provider) {
+    if (provider == nullptr) {
+        return nullptr;
+    }
     const int kRow = count();
     beginInsertRows(QModelIndex(), kRow, kRow);
     chats_.push_back(std::make_unique<Chat>(std::move(provider)));

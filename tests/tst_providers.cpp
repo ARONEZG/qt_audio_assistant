@@ -32,6 +32,7 @@ private slots:
     void test_offerMintsIndependentInstances();
     void test_emptyCollectionHasNoRows();
     void test_collectionExposesOfferedIdentities();
+    void test_rowQueriesOutOfRangeAreNothing();
     void test_rowCountIgnoresChildren();
     void test_modelExposesOfferedRoles();
     void test_modelRejectsUnknownRole();
@@ -40,6 +41,7 @@ private slots:
     void test_freshMintsNewInstancePerCall();
     void test_freshMintsTheProviderOfTheRequestedId();
     void test_freshOfUnknownIdReturnsNothing();
+    void test_freshReturnsNothingWhenRecipeBuildsNothing();
 };
 
 TestProviders::TestProviders(QObject* parent) : QObject(parent) {
@@ -86,6 +88,15 @@ void TestProviders::test_collectionExposesOfferedIdentities() {
     QCOMPARE(kProviders.displayNameAt(1), QStringLiteral("Beta"));
     QCOMPARE(kProviders.contains(QStringLiteral("beta")), true);
     QCOMPARE(kProviders.contains(QStringLiteral("gamma")), false);
+}
+
+void TestProviders::test_rowQueriesOutOfRangeAreNothing() {
+    const Providers kProviders({offerOf(QStringLiteral("alpha"), QStringLiteral("Alpha"))});
+
+    QVERIFY(kProviders.idAt(-1).isNull());
+    QVERIFY(kProviders.idAt(kProviders.count()).isNull());
+    QVERIFY(kProviders.displayNameAt(-1).isNull());
+    QVERIFY(kProviders.displayNameAt(kProviders.count()).isNull());
 }
 
 void TestProviders::test_rowCountIgnoresChildren() {
@@ -156,6 +167,18 @@ void TestProviders::test_freshOfUnknownIdReturnsNothing() {
 
     QVERIFY(kProviders.fresh(QStringLiteral("beta")) == nullptr);
     QCOMPARE(kProviders.contains(QStringLiteral("beta")), false);
+}
+
+void TestProviders::test_freshReturnsNothingWhenRecipeBuildsNothing() {
+    // A recipe is allowed to fail to build a provider (for example when its
+    // configuration is incomplete). That is a well-defined "no provider" that
+    // travels up to Chats::add(), not an undefined state.
+    const Providers kProviders({ProviderOffer(
+            QStringLiteral("broken"), QStringLiteral("Broken"), [] { return std::unique_ptr<Provider>{}; })});
+
+    QVERIFY(kProviders.fresh(QStringLiteral("broken")) == nullptr);
+    QCOMPARE(kProviders.contains(QStringLiteral("broken")), true);
+    QCOMPARE(kProviders.count(), 1);
 }
 
 QTEST_GUILESS_MAIN(TestProviders)

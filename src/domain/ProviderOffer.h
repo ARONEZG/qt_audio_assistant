@@ -20,18 +20,23 @@
 // url/apiKey/model); a test offer captures a FakeProvider.
 class ProviderOffer {
 public:
-    // Mints one fresh provider instance. Must not return nullptr.
+    // Mints one fresh provider instance; a null result means "no provider"
+    // (see fresh()).
     using Recipe = std::function<std::unique_ptr<Provider>()>;
 
     // Valid at creation: the id is the key a chat is created by and must not be
-    // empty, and the recipe must be callable.
+    // empty, and the recipe must be callable. Both are debug-build guards (see
+    // the .cpp): a release build trusts the composition root instead of paying
+    // for checks on every offer.
     ProviderOffer(QString id, QString displayName, Recipe recipe);
 
     [[nodiscard]] const QString& id() const noexcept;
     [[nodiscard]] const QString& displayName() const noexcept;
 
     // Returns a new provider instance owned by the caller; every call returns an
-    // independent object.
+    // independent object. A recipe that cannot build one returns null, which is a
+    // well-defined "no provider" that Providers::fresh() and Chats::add()
+    // propagate - it never turns into a chat without a provider.
     [[nodiscard]] std::unique_ptr<Provider> fresh() const;
 
 private:

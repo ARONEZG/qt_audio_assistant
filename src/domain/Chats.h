@@ -39,15 +39,17 @@ public:
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
     [[nodiscard]] int count() const noexcept;
-    // Precondition: index is in range (checked in debug builds); the returned
-    // chat stays owned by the grid.
+    // The chat at index, or nullptr when the index is out of range (a stale row
+    // yields nothing instead of undefined behaviour); the returned chat stays
+    // owned by the grid.
     [[nodiscard]] Chat* at(int index) const;
 
     // Takes ownership of the provider, builds the chat that owns it and appends
     // it. Returns the created chat (the grid keeps owning it) for callers that
-    // want to select it right away; it is not [[nodiscard]] because the grid
-    // already keeps it alive either way.
-    Chat* add(std::unique_ptr<Provider> provider);
+    // want to select it right away, or nullptr when provider is null - which is
+    // exactly what Providers::fresh() returns for an id that is not offered, so
+    // a failed lookup cannot silently become a chat with no provider.
+    [[nodiscard]] Chat* add(std::unique_ptr<Provider> provider);
     // Removes and destroys the chat at index. Returns false when the index is
     // out of range - removing nothing is a no-op, not an error.
     bool remove(int index);

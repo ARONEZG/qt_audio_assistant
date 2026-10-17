@@ -9,8 +9,10 @@
 Providers::Providers(std::vector<ProviderOffer> offers, QObject* parent)
     : QAbstractListModel(parent), offers_(std::move(offers)) {
     // A duplicate id would make fresh() ambiguous, so the offered identities are
-    // a set by construction. Built unconditionally: a handful of offers makes
-    // the check cheaper than the branch around it.
+    // a set by construction. Duplicates are a composition-root mistake, checked
+    // in debug builds only; in release the first matching offer wins. Built
+    // unconditionally: a handful of offers makes the check cheaper than the
+    // branch around it.
     std::set<QString> offeredIds;
     for (const ProviderOffer& offer : offers_) {
         offeredIds.insert(offer.id());
@@ -29,9 +31,10 @@ int Providers::rowCount(const QModelIndex& parent) const {
 }
 
 QVariant Providers::data(const QModelIndex& index, int role) const {
-    // An invalid index has row() == -1, and an index built by another model can
-    // name a row past the end; both fail the row check, so a list model stays
-    // robust without a second precondition.
+    // A list model is flat: every index it hands out is parentless and in the
+    // single column, so the row check is the whole contract. An invalid index
+    // has row() == -1, and an index built by another model can name a row past
+    // the end; both yield nothing.
     if (!isValidRow(index.row())) {
         return {};
     }
@@ -64,12 +67,16 @@ bool Providers::contains(const QString& id) const {
 }
 
 QString Providers::idAt(int index) const {
-    Q_ASSERT(isValidRow(index));
+    if (!isValidRow(index)) {
+        return {};
+    }
     return offers_[static_cast<std::size_t>(index)].id();
 }
 
 QString Providers::displayNameAt(int index) const {
-    Q_ASSERT(isValidRow(index));
+    if (!isValidRow(index)) {
+        return {};
+    }
     return offers_[static_cast<std::size_t>(index)].displayName();
 }
 
@@ -78,6 +85,8 @@ std::unique_ptr<Provider> Providers::fresh(const QString& id) const {
     if (kIndex < 0) {
         return nullptr;
     }
+    // A recipe that cannot build a provider yields null here as well; the null
+    // propagates to Chats::add, which refuses to build a provider-less chat.
     return offers_[static_cast<std::size_t>(kIndex)].fresh();
 }
 
