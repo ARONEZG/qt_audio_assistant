@@ -119,7 +119,27 @@ find_qmlformat() {
     echo ""
 }
 
+# qmllint must be the Qt the QML module is built against (the project pins Qt
+# 6.8.3 in CMakeLists.txt and the CI workflow installs the same with aqtinstall).
+# The distro qt6-tools on this machine ship 6.4.2, which cannot parse the
+# module's generated *.qmltypes and would fail the QML gate for a valid module.
+project_qt_bin() {
+    for prefix in "$HOME/Qt/6.8.3/gcc_64" "${QTDIR:-}" /opt/Qt/6.8.3/gcc_64; do
+        if [ -n "$prefix" ] && [ -x "$prefix/bin/qmllint" ]; then
+            echo "$prefix/bin"
+            return
+        fi
+    done
+    echo ""
+}
+
 find_qmllint() {
+    local qt_bin
+    qt_bin=$(project_qt_bin)
+    if [ -n "$qt_bin" ]; then
+        echo "$qt_bin/qmllint"
+        return
+    fi
     for candidate in /usr/lib/qt6/bin/qmllint /usr/lib/qt6/bin/qmllint6 qmllint; do
         if command -v "$candidate" &>/dev/null; then
             echo "$candidate"
@@ -127,6 +147,24 @@ find_qmllint() {
         fi
     done
     echo ""
+}
+
+# QML module import paths produced by qt_add_qml_module (a qmldir plus the
+# generated *.qmltypes). Passing them lets qmllint resolve the C++ types and the
+# Theme singleton; without a build directory the lint still runs but reports the
+# module as unresolved (qmllint treats that as a warning, not an error).
+qml_import_args() {
+    local dir
+    for dir in \
+        "$PROJECT_ROOT/build-debug" \
+        "$PROJECT_ROOT/build-release" \
+        "$PROJECT_ROOT/build/debug" \
+        "$PROJECT_ROOT/build/release" \
+        "$PROJECT_ROOT/build"; do
+        if [ -d "$dir/qml" ]; then
+            printf -- '-I %s\n' "$dir/qml"
+        fi
+    done
 }
 
 find_clazy() {
@@ -342,7 +380,11 @@ step_qmllint() {
         return 0
     fi
 
-    if $ql $files; then
+    local import_paths
+    import_paths=$(qml_import_args)
+
+    # shellcheck disable=SC2086  # import paths are intentionally word-split
+    if $ql $import_paths $files; then
         pass "qmllint OK"
     else
         fail "qmllint found issues"

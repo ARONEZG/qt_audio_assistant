@@ -1,0 +1,68 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import AudioAssistant
+
+// One cell of the chat grid: a header with the provider name, the transcript and
+// the composer, all bound to a single Chat.
+// Public API: `chat`, injected by the grid from the model's role. All the cell
+// does is bind the chat's state and forward the user's intentions (send,
+// cancel) to it - it holds no state of its own.
+Rectangle {
+    id: root
+
+    required property Chat chat
+
+    implicitWidth: Theme.panelMinimumWidth
+    implicitHeight: Theme.panelMinimumHeight
+    color: Theme.surface
+    radius: Theme.radius
+    border.color: Theme.border
+
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.margins: Theme.spacingMedium
+        spacing: Theme.spacingMedium
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacingMedium
+
+            Text {
+                Layout.fillWidth: true
+                text: root.chat.providerName
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeTitle
+                elide: Text.ElideRight
+                Accessible.role: Accessible.Heading
+                Accessible.name: root.chat.providerName
+            }
+
+            BusyIndicator {
+                running: root.chat.streaming
+                visible: root.chat.streaming
+                Accessible.name: qsTr("Waiting for a reply")
+            }
+
+            Button {
+                text: qsTr("Cancel")
+                objectName: "cancelButton"
+                visible: root.chat.streaming
+                Accessible.name: qsTr("Cancel the reply")
+                onClicked: root.chat.cancel()
+            }
+        }
+
+        ConversationView {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            chat: root.chat
+        }
+
+        Composer {
+            Layout.fillWidth: true
+            busy: root.chat.streaming
+            onSubmitted: text => root.chat.send(text)
+        }
+    }
+}

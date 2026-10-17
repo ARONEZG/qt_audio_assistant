@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QtQml/qqmlregistration.h>
+
 #include <QAbstractListModel>
 #include <QByteArray>
 #include <QHash>
@@ -22,6 +24,12 @@
 class Chats : public QAbstractListModel {
     Q_OBJECT
     Q_DISABLE_COPY_MOVE(Chats)
+    // The grid is composed in main() and injected into the view; a view must
+    // never mint its own grid, so the type is visible to QML but uncreatable.
+    QML_ELEMENT
+    QML_UNCREATABLE("The composition root owns the grid")
+
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
 
 public:
     // The Chat object of a row is exposed as model.chat. Qt roles are plain ints
@@ -53,6 +61,9 @@ public:
     // Removes and destroys the chat at index. Returns false when the index is
     // out of range - removing nothing is a no-op, not an error.
     bool remove(int index);
+
+signals:
+    void countChanged();
 
 private:
     [[nodiscard]] bool isValidRow(int index) const noexcept;

@@ -9,6 +9,22 @@
 
 ### Changed
 
+- Сборка QML-слоя приведена к одному целевому таргету: `audio-assistant-domain`
+  стал backing-таргетом QML-модуля `AudioAssistant`, отдельный таргет
+  `audio-assistant-qml` удалён. C++-типы домена и есть view models, поэтому
+  отдельная библиотека-адаптер не нужна; для статического QML-модуля
+  генерируемый плагин (`audio-assistant-domainplugin`) линкуется в приложение и
+  в GUI-тесты, иначе движок не видит зарегистрированные типы.
+- В `audio-assistant-qt-warnings` добавлены подавления для генерируемого Qt-кода
+  QML-модуля (qrc-инициализаторы, qmlcachegen, регистрация типов):
+  `-Wno-global-constructors`, `-Wno-exit-time-destructors`,
+  `-Wno-missing-prototypes`, `-Wno-extra-semi-stmt` — эти конструкции создаёт Qt,
+  вручную они не переписываются.
+- `scripts/static-analysis.sh` и `.pre-commit-config.yaml` запускают `qmllint` из
+  того же Qt, против которого собирается модуль (проектный Qt 6.8.3), и
+  передают `-I` для сгенерированного `qmldir`/`*.qmltypes`. Системный
+  qt6-tools 6.4.2 не умеет разбирать `qmltypes` проектного модуля и отвергал
+  валидный QML; `qmlformat` обеих версий даёт идентичный результат.
 - LLMQore больше не подтягивается через `FetchContent` в `CMakeLists.txt`: библиотека
   поставляется Conan-пакетом `llmqore/0.8.0` из in-repo рецепта `recipes/llmqore`
   (пин на upstream-тег `v0.8.0`). Conan стал обязательным для сборки, а загрузка
@@ -31,6 +47,40 @@
 
 ### Added
 
+- QML-слой LLM-чата (третий инкремент плана): `Chat` стал моделью сообщений для
+  QML — `QAbstractListModel` поверх неизменяемого `std::vector<Message>`
+  (append-only: строки только вставляются, роли `text` и `isUser`), при этом
+  живой ответ остаётся отдельными свойствами `streamingText` и `streaming` и не
+  попадает в историю до `completed`. C++-типы `Chat`, `Chats`, `Providers`,
+  `Message` и `NewChat` зарегистрированы в QML-модуле `AudioAssistant`
+  (`QML_ELEMENT` + `qt_add_qml_module`); чаты помечены C++-владением, чтобы
+  движок не забрал себе объекты, которыми владеет сетка.
+- Тонкий QML-интерфейс чата из компонентов (`qml/`): `Main` (композиция),
+  `ProviderSelector` (выбор провайдера + намерение «добавить чат»), `ChatGrid`
+  (сетка независимых чатов), `ChatPanel` (ячейка: шапка, отмена, транскрипт,
+  ввод), `ConversationView` (лента сообщений и стриминг), `MessageDelegate`
+  (одно сообщение) и `Composer` (ввод + отправка). Цвета, отступы и типографика —
+  через синглтон токенов `Theme`; у интерактивных элементов заданы
+  accessibility-имена.
+- `NewChat` (`src/domain/NewChat.h`) — тонкий инвокабл, закрывающий ключевой
+  вопрос инкремента: QML не может ни вызвать `Providers::fresh(id)`
+  (`std::unique_ptr`), ни передать провайдера в `Chats::add`, поэтому ровно одна
+  композиция `chats.add(providers.fresh(id))` инкапсулирована в этом объекте без
+  состояния, а composition root (`main()`) решает, с какой сеткой и списком он
+  работает.
+- Композиция приложения в `main()` (composition root): сетка `Chats`, список
+  `Providers` с рецептом провайдера и `NewChat` создаются и внедряются в QML
+  через `setInitialProperties`; QML ничего не конструирует сам.
+- `PlaceholderProvider` (`src/app/`) — честно помеченный локальный in-memory
+  провайдер-заглушка («Placeholder (offline)»), отвечающий эхом и кормящий
+  `Answer` из цикла событий. Сеть и `PolzaProvider` — следующий инкремент.
+- Тесты: `tst_newchat` (композиция `open`, владение, независимость экземпляров,
+  неизвестный id, «рецепт не собрал провайдера»), роли, append-only модель
+  сообщений и граница `cancel` без стриминга в `tst_chat`,
+  `tst_placeholderprovider` (контракт `respond`: асинхронность, эхо, пустая
+  история), а также offscreen QML smoke-тест
+  `tst_main`, прогоняющий через интерфейс «добавить чат» и «отправить» с фейковым
+  провайдером.
 - Коллекции LLM-чата (`src/domain/`): `Providers` — неизменяемый список доступных
   для выбора провайдеров (идентификатор и отображаемое имя в C++ и как роли модели
   `id`/`displayName`), с запросом `fresh(id)`, выдающим новый независимый экземпляр

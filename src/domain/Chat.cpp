@@ -1,8 +1,10 @@
 #include "domain/Chat.h"
 
+#include <cstddef>
 #include <utility>
 
-Chat::Chat(std::unique_ptr<Provider> provider, QObject* parent) : QObject(parent), provider_(std::move(provider)) {
+Chat::Chat(std::unique_ptr<Provider> provider, QObject* parent)
+    : QAbstractListModel(parent), provider_(std::move(provider)) {
     Q_ASSERT(provider_ != nullptr);
 }
 
@@ -12,6 +14,42 @@ Chat::~Chat() {
     if (currentAnswer_ != nullptr) {
         disconnect(currentAnswer_, nullptr, this, nullptr);
     }
+}
+
+int Chat::rowCount(const QModelIndex& parent) const {
+    // A list model has no children, so rows exist only under the root index.
+    if (parent.isValid()) {
+        return 0;
+    }
+    return static_cast<int>(messages_.size());
+}
+
+QVariant Chat::data(const QModelIndex& index, int role) const {
+    // A list model is flat: every index it hands out is parentless and in the
+    // single column, so the row check is the whole contract. An invalid index
+    // has row() == -1, and an index built by another model can name a row past
+    // the end; both yield nothing.
+    if (!isValidRow(index.row())) {
+        return {};
+    }
+    const Message& message = messages_[static_cast<std::size_t>(index.row())];
+    if (role == kTextRole) {
+        return message.text();
+    }
+    if (role == kIsUserRole) {
+        return message.isUser();
+    }
+    return {};
+}
+
+QHash<int, QByteArray> Chat::roleNames() const {
+    // roleNames() is a Qt model API whose return type is mandated as QHash. This
+    // is the unavoidable-container boundary from src/AGENTS.md: the QHash is
+    // built here, never stored in a field and never returned by another API.
+    QHash<int, QByteArray> roles;
+    roles.insert(kTextRole, QByteArrayLiteral("text"));
+    roles.insert(kIsUserRole, QByteArrayLiteral("isUser"));
+    return roles;
 }
 
 const std::vector<Message>& Chat::messages() const noexcept {
@@ -38,7 +76,7 @@ void Chat::send(const QString& text) {
     if (isStreaming_) {
         return;
     }
-    messages_.emplace_back(MessageRole::kUser, text);
+    appendMessage(Message(MessageRole::kUser, text));
     startStreaming();
 }
 
@@ -52,6 +90,19 @@ void Chat::cancel() {
     } else {
         stopStreaming();
     }
+}
+
+void Chat::appendMessage(const Message& message) {
+    // Append-only: the row is inserted at the end and the history is never
+    // mutated, so a model index stays valid and keeps naming its message.
+    const int kRow = static_cast<int>(messages_.size());
+    beginInsertRows(QModelIndex(), kRow, kRow);
+    messages_.push_back(message);
+    endInsertRows();
+}
+
+bool Chat::isValidRow(int index) const noexcept {
+    return index >= 0 && index < static_cast<int>(messages_.size());
 }
 
 void Chat::startStreaming() {
@@ -96,7 +147,7 @@ void Chat::onChunkReceived(const QString& chunk) {
 }
 
 void Chat::onAnswerCompleted(const Message& message) {
-    messages_.push_back(message);
+    appendMessage(message);
     emit replyReceived(message);
     stopStreaming();
 }

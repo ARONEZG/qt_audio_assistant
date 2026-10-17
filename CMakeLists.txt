@@ -241,6 +241,15 @@ target_compile_options(audio-assistant-qt-warnings INTERFACE
     # moc-generated dispatchers index the signal-argument array directly; this
     # pattern lives only in generated code and cannot be rewritten by hand.
     -Wno-unsafe-buffer-usage
+    # Qt generates resource initializers and QML cache code with static
+    # constructors/destructors (qrc init, qmlcachegen output); -Weverything
+    # flags those generated constructs, which cannot be rewritten by hand.
+    -Wno-global-constructors
+    -Wno-exit-time-destructors
+    # Generated registration/resource entry points are free functions without a
+    # header prototype, and the QML compiler emits empty statements.
+    -Wno-missing-prototypes
+    -Wno-extra-semi-stmt
 )
 
 # ── LLMQore (LLM client library) ────────────────────────────
@@ -252,14 +261,16 @@ target_compile_options(audio-assistant-qt-warnings INTERFACE
 find_package(LLMQore REQUIRED)
 
 # ── Domain library ──────────────────────────────────────────
-# Framework-agnostic chat domain (immutable values, provider role interface,
-# orchestration). Built as a static library so the executable and every test
-# target link the same implementation.
+# Chat domain (immutable values, provider role interface, collections). Built as
+# a static library so the executable and every test target link the same
+# implementation, and used as the backing target of the AudioAssistant QML
+# module below (its types are the QML view models).
 add_library(audio-assistant-domain STATIC
     src/domain/Answer.cpp
     src/domain/Chat.cpp
     src/domain/Chats.cpp
     src/domain/Message.cpp
+    src/domain/NewChat.cpp
     src/domain/Provider.cpp
     src/domain/ProviderOffer.cpp
     src/domain/Providers.cpp
@@ -274,31 +285,62 @@ target_include_directories(audio-assistant-domain PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
 )
 
+# qmltyperegistrar generates `#if __has_include(<Header.h>)` for the types it
+# registers (it only keeps the header's file name), so the headers must also be
+# reachable by their bare name while the module's registration code compiles.
+target_include_directories(audio-assistant-domain PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/domain
+)
+
+# Qt6::Qml is public because the domain types carry the QML registration macros
+# (QML_ELEMENT) in their headers; every consumer of the headers needs the Qml
+# include path. The types are the view models, so there is no separate adapter.
 target_link_libraries(audio-assistant-domain
-    PUBLIC Qt6::Core
+    PUBLIC Qt6::Core Qt6::Qml
     PRIVATE audio-assistant-strict audio-assistant-qt-warnings
 )
 
 # ── QML module ──────────────────────────────────────────────
-# Put Main.qml at the root of the module resources (default behaviour
-# would keep the qml/ subdirectory, resulting in qrc:/qt/qml/AudioAssistant/qml/Main.qml).
-# The alias must be set BEFORE qt_add_qml_module() because the macro computes
-# the resource deploy paths while it parses QML_FILES.
-set_source_files_properties(qml/Main.qml
-    PROPERTIES QT_RESOURCE_ALIAS "Main.qml"
+# The domain library is the backing target of the AudioAssistant QML module: the
+# C++ types it exposes (Chat, Chats, Providers, Message) are the view models, so
+# a view binds to them directly and no adapter library is needed. QML files are
+# placed at the module root; a resource alias per file keeps them out of a qml/
+# subdirectory (the default would deploy them under /qt/qml/AudioAssistant/qml/).
+set(_audio_assistant_qml_files
+    qml/Main.qml
+    qml/Theme.qml
+    qml/MessageDelegate.qml
+    qml/Composer.qml
+    qml/ConversationView.qml
+    qml/ChatPanel.qml
+    qml/ProviderSelector.qml
+    qml/ChatGrid.qml
 )
 
-qt_add_qml_module(audio-assistant-qml
+foreach(_qml_file IN LISTS _audio_assistant_qml_files)
+    get_filename_component(_qml_name "${_qml_file}" NAME)
+    set_source_files_properties("${_qml_file}"
+        PROPERTIES QT_RESOURCE_ALIAS "${_qml_name}"
+    )
+endforeach()
+
+# Theme.qml is a `pragma Singleton`; qt_add_qml_module needs the file property
+# (the pragma alone is not enough) so the generated qmldir marks it a singleton.
+set_source_files_properties(qml/Theme.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE
+)
+
+qt_add_qml_module(audio-assistant-domain
     URI "AudioAssistant"
     VERSION 1.0
     RESOURCE_PREFIX /qt/qml
     OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/qml/AudioAssistant
-    QML_FILES
-        qml/Main.qml
+    QML_FILES ${_audio_assistant_qml_files}
 )
 
 # ── Main executable ─────────────────────────────────────────
 add_executable(audio-assistant
+    src/app/PlaceholderProvider.cpp
     src/main.cpp
     src/logging/LogBridge.cpp
 )
@@ -309,8 +351,11 @@ set_target_properties(audio-assistant PROPERTIES
 
 target_link_libraries(audio-assistant PRIVATE
     audio-assistant-strict
+    audio-assistant-qt-warnings
     audio-assistant-domain
-    audio-assistant-qml
+    # For a static QML module the generated plugin must be linked into the
+    # executable, otherwise the engine cannot register the module's C++ types.
+    audio-assistant-domainplugin
     Qt6::Core
     Qt6::Gui
     Qt6::Qml
@@ -372,26 +417,48 @@ audio_assistant_add_domain_test(tst_chats
     tests/FakeProvider.cpp
     tests/FakeProvider.h
 )
+audio_assistant_add_domain_test(tst_newchat
+    tests/tst_newchat.cpp
+    tests/FakeProvider.cpp
+    tests/FakeProvider.h
+)
+audio_assistant_add_domain_test(tst_placeholderprovider
+    tests/tst_placeholderprovider.cpp
+    src/app/PlaceholderProvider.cpp
+)
 
-qt_add_executable(tst_main
+# GUI/QML tests: they load the real QML module offscreen and drive it with a
+# fake provider, so they link the module (and its generated plugin) plus Quick.
+function(audio_assistant_add_qml_test target)
+    qt_add_executable(${target} ${ARGN})
+
+    set_target_properties(${target} PROPERTIES
+        CXX_EXTENSIONS OFF
+    )
+
+    target_link_libraries(${target} PRIVATE
+        audio-assistant-strict
+        audio-assistant-qt-warnings
+        audio-assistant-domain
+        audio-assistant-domainplugin
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::QuickControls2
+        Qt6::Test
+    )
+
+    add_test(NAME ${target} COMMAND ${target})
+    set_tests_properties(${target} PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+endfunction()
+
+audio_assistant_add_qml_test(tst_main
     tests/tst_main.cpp
-)
-
-set_target_properties(tst_main PROPERTIES
-    CXX_EXTENSIONS OFF
-)
-
-target_link_libraries(tst_main PRIVATE
-    audio-assistant-strict
-    audio-assistant-qml
-    Qt6::Gui
-    Qt6::Qml
-    Qt6::Test
-)
-
-add_test(NAME tst_main COMMAND tst_main)
-set_tests_properties(tst_main PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    tests/FakeProvider.cpp
+    tests/FakeProvider.h
 )
 
 # ── Logging tests ───────────────────────────────────────────

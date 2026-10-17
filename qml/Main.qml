@@ -1,39 +1,43 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import AudioAssistant
 
+// The application window. Its three typed properties are the composition root's
+// dependencies, injected by main() before the component is loaded: the chat
+// grid, the offered providers and the thin invokable that turns the "add chat"
+// intent into chats.add(providers.fresh(id)). The view only binds them together.
 ApplicationWindow {
-    title: "Audio Assistant"
-    visible: true
-    minimumWidth: 480
-    minimumHeight: 320
-    width: 640
-    height: 480
+    id: window
 
-    color: "#1e1e1e"
+    required property Chats chats
+    required property Providers providers
+    required property NewChat newChat
+
+    title: qsTr("Audio Assistant")
+    visible: true
+    width: 1000
+    height: 720
+    minimumWidth: 640
+    minimumHeight: 480
+    color: Theme.background
 
     ColumnLayout {
         anchors.fill: parent
+        spacing: 0
 
-        Label {
-            text: "Audio Assistant"
-            font.pixelSize: 24
-            horizontalAlignment: Text.AlignHCenter
-            color: "#ffffff"
+        ProviderSelector {
+            Layout.fillWidth: true
+            Layout.margins: Theme.spacingMedium
+            providers: window.providers
+            onChatRequested: providerId => window.newChat.open(providerId)
         }
 
-        Label {
-            text: "Каркас приложения собран. Функции пока не реализованы."
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
-            color: "#aaaaaa"
-        }
-
-        Button {
-            text: "Close"
-            Layout.alignment: Qt.AlignHCenter
-            onClicked: Qt.quit()
+        ChatGrid {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.margins: Theme.spacingMedium
+            chats: window.chats
         }
     }
 }
