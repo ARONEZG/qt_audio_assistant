@@ -37,7 +37,10 @@ enum class CaptureError {
 //
 // The frames are delivered from miniaudio's real-time data callback, therefore
 // the sink must honour the AudioSink contract (non-blocking, allocation-free
-// and no locking).
+// and no locking). The sink is borrowed: it must outlive the source. The
+// destructor stops the device before the source is destroyed, so declaring the
+// sink before the source (so that it is destroyed after it) is safe; the
+// reverse order would leave the callback writing into a destroyed sink.
 //
 // Lifecycle: start() is idempotent (a second call while running is a no-op),
 // stop() is idempotent and safe without a prior start(), and the destructor

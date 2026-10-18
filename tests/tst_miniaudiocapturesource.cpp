@@ -9,6 +9,14 @@
 //  * the failure path is forced deterministically by passing a zero-initialised
 //    context, which miniaudio rejects at device init.
 // No sleep and no wall-clock dependency: everything is synchronous.
+//
+// Known coverage gap: the ma_device_start() failure branch (kDeviceStartFailed,
+// including the ma_device_uninit() cleanup) is not exercised. miniaudio offers
+// no public, deterministic way to make the null backend fail to start - its
+// start always succeeds - and adding a production seam only to force that
+// failure would test a stub rather than the backend integration. The branch is
+// therefore kept as a defensive path: a device that initialised but failed to
+// start is released without leaving the source half-open.
 #include <miniaudio.h>
 
 #include <QtTest>
