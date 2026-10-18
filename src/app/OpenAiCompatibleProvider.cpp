@@ -44,15 +44,16 @@ LLMQore::Conversation toConversation(const std::vector<Message>& history) {
     return conversation;
 }
 
-// Classifies an LLMQore failure message as a typed ProviderError. LLMQore
-// prefixes HTTP failures with "HTTP <code>" (BaseClient::parseHttpError) and
-// carries the transport error string otherwise; the domain never parses this
-// text itself, so the classification lives here, in the adapter.
+// Classifies an LLMQore failure message as a typed ProviderError. LLMQore's
+// public requestFailed(id, QString) carries only the message text - the typed
+// HttpTransportError is converted to a string inside the library - so string
+// classification is the only seam available. LLMQore prefixes HTTP failures with
+// "HTTP <code>" (BaseClient::parseHttpError) and carries the QNetworkReply error
+// string otherwise; every mapping below is pinned by tst_openai_provider.
 ProviderError classifyFailure(const QString& detail) {
-    const qsizetype kHttpIndex = detail.indexOf(kHttpPrefix);
-    if (kHttpIndex >= 0) {
+    if (detail.startsWith(kHttpPrefix)) {
         int code = 0;
-        for (qsizetype i = kHttpIndex + kHttpPrefix.size(); i < detail.size() && detail.at(i).isDigit(); ++i) {
+        for (qsizetype i = kHttpPrefix.size(); i < detail.size() && detail.at(i).isDigit(); ++i) {
             code = code * 10 + detail.at(i).digitValue();
         }
         switch (code) {
@@ -99,12 +100,16 @@ void failLater(Answer* answer, ProviderError error, const QString& detail) {
 
 }  // namespace
 
-OpenAiCompatibleProvider::OpenAiCompatibleProvider(QString url, QString apiKey, QString model, QObject* parent)
+OpenAiCompatibleProvider::OpenAiCompatibleProvider(
+        QString url, QString apiKey, QString model, int transferTimeoutMs, QObject* parent)
     : Provider(parent),
       url_(std::move(url)),
       apiKey_(std::move(apiKey)),
       model_(std::move(model)),
       client_(new LLMQore::OpenAIClient(url_, apiKey_, model_, this)) {
+    if (transferTimeoutMs > 0) {
+        client_->setTransferTimeout(transferTimeoutMs);
+    }
     // The client is the "network" side; its signals are routed to the Answer of
     // the matching request. Connections live on the provider, so they are torn
     // down with it.
@@ -165,12 +170,14 @@ Answer* OpenAiCompatibleProvider::respond(const std::vector<Message>& history) {
     answers_.emplace(kId, answer);
     // The Answer is the cancellation handle: when a consumer cancels it, the
     // real network request is aborted. The provider only translates the intent.
-    connect(answer, &Answer::cancelled, this, [this, kId] { client_->cancelRequest(kId); });
+    // The entry is dropped here rather than waiting for LLMQore's terminal
+    // signal, so cancellation does not depend on the client emitting
+    // requestFailed (which would otherwise leave a stale map entry).
+    connect(answer, &Answer::cancelled, this, [this, kId] {
+        client_->cancelRequest(kId);
+        drop(kId);
+    });
     return answer;
-}
-
-void OpenAiCompatibleProvider::setTransferTimeout(int milliseconds) {
-    client_->setTransferTimeout(milliseconds);
 }
 
 Answer* OpenAiCompatibleProvider::answerFor(const QString& requestId) const {

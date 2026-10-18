@@ -98,6 +98,7 @@ private slots:
     void test_malformedFrameIsIgnoredAndStreamContinues();
     void test_interruptedStreamFails();
     void test_cancelAbortsTheNetworkRequest();
+    void test_cancelThenRespondStillWorks();
     void test_timeoutFailsTheAnswer();
     void test_missingApiKeyFailsWithoutNetwork();
     void test_missingEndpointFailsWithoutNetwork();
@@ -267,15 +268,52 @@ void TestOpenAiProvider::test_cancelAbortsTheNetworkRequest() {
     QVERIFY(kChunkSpy.wait(kReplyTimeout));
     const QSignalSpy kCancelledSpy(answer, &Answer::cancelled);
     const QSignalSpy kFailedSpy(answer, &Answer::failed);
-    QSignalSpy kDisconnectedSpy(&server, &OpenAiMockServer::clientDisconnected);
+    const QSignalSpy kDisconnectedSpy(&server, &OpenAiMockServer::clientDisconnected);
+    const QSignalSpy kDestroyedSpy(answer, &QObject::destroyed);
 
     answer->cancel();
 
     QCOMPARE(kCancelledSpy.count(), 1);
     QCOMPARE(answer->isCancelled(), true);
-    // The cancel reached the wire: the server observed the connection drop.
-    QVERIFY(kDisconnectedSpy.wait(kReplyTimeout));
+    // Wait for the whole cancellation to settle: the provider disposes of the
+    // answer (and its request entry), and the abort reaches the wire (the server
+    // observes the connection drop).
+    QVERIFY(QTest::qWaitFor([&] { return kDestroyedSpy.count() > 0 && kDisconnectedSpy.count() > 0; }, kReplyTimeout));
     QCOMPARE(kFailedSpy.count(), 0);
+}
+
+void TestOpenAiProvider::test_cancelThenRespondStillWorks() {
+    int requests = 0;
+    OpenAiMockServer server;
+    QVERIFY(server.listen());
+    server.setHandler([&requests](QTcpSocket& socket, const QByteArray&) {
+        ++requests;
+        writeChunkedHeaders(socket);
+        if (requests == 1) {
+            // Keep the first stream open so the test can cancel it mid-flight.
+            writeSseEvent(socket, contentChunk("par"));
+            return;
+        }
+        writeSseEvent(socket, contentChunk("ok"));
+        writeSseEvent(socket, finishChunk());
+        endChunked(socket);
+    });
+    const auto kProvider = makeProvider(server);
+
+    Answer* first = kProvider->respond(userHistory());
+    QSignalSpy kFirstChunkSpy(first, &Answer::chunkReceived);
+    QVERIFY(kFirstChunkSpy.wait(kReplyTimeout));
+    QSignalSpy kFirstDestroyedSpy(first, &QObject::destroyed);
+    first->cancel();
+    QVERIFY(kFirstDestroyedSpy.wait(kReplyTimeout));
+
+    // The provider stays usable after a cancellation: a fresh request streams
+    // and completes normally.
+    Answer* second = kProvider->respond(userHistory());
+    QSignalSpy kCompletedSpy(second, &Answer::completed);
+    QVERIFY(kCompletedSpy.wait(kReplyTimeout));
+    QCOMPARE(second->text(), QStringLiteral("ok"));
+    QCOMPARE(server.requestCount(), 2);
 }
 
 void TestOpenAiProvider::test_timeoutFailsTheAnswer() {
@@ -284,10 +322,9 @@ void TestOpenAiProvider::test_timeoutFailsTheAnswer() {
     server.setHandler([](QTcpSocket&, const QByteArray&) {
         // Accept the request but never respond, forcing the transfer timeout.
     });
-    const auto kProvider = makeProvider(server);
-    kProvider->setTransferTimeout(300);
+    OpenAiCompatibleProvider provider(server.baseUrl(), QStringLiteral("test-key"), QStringLiteral("test-model"), 300);
 
-    Answer* answer = kProvider->respond(userHistory());
+    Answer* answer = provider.respond(userHistory());
     QSignalSpy kFailedSpy(answer, &Answer::failed);
     QVERIFY(kFailedSpy.wait(kReplyTimeout));
 

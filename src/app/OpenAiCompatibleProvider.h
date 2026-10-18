@@ -39,16 +39,15 @@ class OpenAiCompatibleProvider : public Provider {
     Q_DISABLE_COPY_MOVE(OpenAiCompatibleProvider)
 
 public:
-    OpenAiCompatibleProvider(QString url, QString apiKey, QString model, QObject* parent = nullptr);
+    // transferTimeoutMs <= 0 keeps the client's own default; a positive value
+    // overrides the transfer timeout for this provider's client at creation.
+    OpenAiCompatibleProvider(
+            QString url, QString apiKey, QString model, int transferTimeoutMs = 0, QObject* parent = nullptr);
     ~OpenAiCompatibleProvider() override;
 
     [[nodiscard]] QString id() const override;
     [[nodiscard]] QString displayName() const override;
     Answer* respond(const std::vector<Message>& history) override;
-
-    // Overrides the underlying client's transfer timeout. Production keeps the
-    // client default; a test uses it to make a stalled request fail promptly.
-    void setTransferTimeout(int milliseconds);
 
 private:
     // The Answer currently fed by the given in-flight request, or nullptr when
