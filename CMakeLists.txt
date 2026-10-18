@@ -279,15 +279,17 @@ set_target_properties(miniaudio::miniaudio PROPERTIES
 )
 
 # ── Audio library ───────────────────────────────────────────
-# The audio subsystem. It holds two things:
+# The audio subsystem. It holds three things:
 #   * the framework-agnostic capture contracts (AudioFormat, AudioSource,
-#     AudioSink) that depend only on the STL, so a consumer or a test can use
-#     them without pulling Qt or any platform code in;
+#     AudioSink) and the SPSC ring buffer (AudioBuffer) that implements the
+#     AudioSink port; they depend only on the STL, so a consumer or a test can
+#     use them without pulling Qt or any platform code in;
 #   * the miniaudio implementation translation unit, so the third-party
 #     amalgamation is compiled once and the future platform-specific capture
 #     code has a single home behind a narrow interface.
-# Capture logic and the ring buffer are added on top of the contracts later.
+# The concrete capture logic (miniaudio-backed AudioSource) is added later.
 add_library(audio-assistant-audio STATIC
+    src/audio/AudioBuffer.cpp
     src/audio/AudioFormat.cpp
     src/audio/AudioSink.cpp
     src/audio/AudioSource.cpp
@@ -599,6 +601,32 @@ target_link_libraries(tst_audioformat PRIVATE
 
 add_test(NAME tst_audioformat COMMAND tst_audioformat)
 set_tests_properties(tst_audioformat PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── Audio ring buffer test ──────────────────────────────────
+# Covers the SPSC ring buffer that implements AudioSink: capacity invariants,
+# exact-capacity and wrap-around ordering, overwrite of the oldest frames, empty
+# input, snapshot independence and concurrent write/snapshot consistency. The
+# buffer is STL-only, so this target links the audio library without the
+# Qt-specific warning suppressions.
+qt_add_executable(tst_audiobuffer
+    tests/tst_audiobuffer.cpp
+)
+
+set_target_properties(tst_audiobuffer PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_audiobuffer PRIVATE
+    audio-assistant-strict
+    audio-assistant-audio
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_audiobuffer COMMAND tst_audiobuffer)
+set_tests_properties(tst_audiobuffer PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
