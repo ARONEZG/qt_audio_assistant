@@ -192,7 +192,10 @@ void OpenAiCompatibleTranscriber::emitResult(const QByteArray& body) {
     }
     const QJsonValue kText = kDocument.object().value(QStringLiteral("text"));
     if (!kText.isString()) {
-        qWarning().noquote() << "Transcription response is missing the 'text' field:" << body;
+        // A large or sensitive 2xx body must not flood the log: keep the same
+        // 200-char cap as httpErrorMessage.
+        qWarning().noquote() << "Transcription response is missing the 'text' field:"
+                             << QString::fromUtf8(body).left(200);
         emit failed(ProviderError::kInvalidResponse,
                     QStringLiteral("Transcription response is missing the 'text' field"));
         return;

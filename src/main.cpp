@@ -139,7 +139,12 @@ void wireTranscriberSettings(ProviderSettings& settings,
                              const QString& sttModel) {
     QObject::connect(&settings, &ProviderSettings::saved, &transcriber, [&settings, &transcriber] {
         transcriber.setConfiguration(settings.baseUrl(), settings.apiKey());
-        qInfo() << "Speech-to-text configuration updated from saved provider settings";
+        // Report the new value (or <unset>) like the startup log, so a "saved
+        // but still failing" scenario is diagnosable without inferring state.
+        qInfo().noquote() << "Speech-to-text configuration updated: baseUrl="
+                          << (settings.baseUrl().isEmpty() ? QStringLiteral("<unset>") : settings.baseUrl())
+                          << "apiKey="
+                          << (settings.apiKey().isEmpty() ? QStringLiteral("<unset>") : QStringLiteral("set"));
     });
     qInfo().noquote() << "Speech-to-text:" << "baseUrl="
                       << (settings.baseUrl().isEmpty() ? QStringLiteral("<unset>") : settings.baseUrl())

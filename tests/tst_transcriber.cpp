@@ -70,6 +70,7 @@ private slots:
     void test_missingApiKeyFailsWithoutNetwork();
     void test_missingEndpointFailsWithoutNetwork();
     void test_setConfigurationPicksUpEndpointAndKey();
+    void test_setConfigurationCanBeReapplied();
 };
 
 TestTranscriber::TestTranscriber(QObject* parent) : QObject(parent) {
@@ -369,6 +370,7 @@ void TestTranscriber::test_setConfigurationPicksUpEndpointAndKey() {
 
     // Built with no endpoint and no key, exactly like the app's startup path.
     OpenAiCompatibleTranscriber transcriber(QStringLiteral(""), QStringLiteral(""));
+    const QSignalSpy kFailedSpy(&transcriber, &TranscriptionProvider::failed);
     transcriber.setConfiguration(server.baseUrl(), QStringLiteral("live-key"));
 
     QSignalSpy kTranscribedSpy(&transcriber, &TranscriptionProvider::transcribed);
@@ -376,6 +378,7 @@ void TestTranscriber::test_setConfigurationPicksUpEndpointAndKey() {
     QVERIFY(kTranscribedSpy.wait(kReplyTimeout));
 
     QCOMPARE(kTranscribedSpy.at(0).at(0).toString(), QStringLiteral("configured"));
+    QCOMPARE(kFailedSpy.count(), 0);
     QCOMPARE(server.requestCount(), 1);
     QCOMPARE(server.lastRequestTarget(), QByteArrayLiteral("/v1/audio/transcriptions"));
     QCOMPARE(server.lastRequestHeader("Authorization"), QByteArrayLiteral("Bearer live-key"));
@@ -383,6 +386,30 @@ void TestTranscriber::test_setConfigurationPicksUpEndpointAndKey() {
     // setConfiguration must not clobber the (separate) speech-to-text model.
     const QJsonObject kPayload = QJsonDocument::fromJson(server.lastRequestBody()).object();
     QCOMPARE(kPayload.value(QStringLiteral("model")).toString(), QStringLiteral("openai/whisper-1"));
+}
+
+// The configuration update is not a one-shot: a second setConfiguration with a
+// new key must reach the next request, so every save in the settings panel takes
+// effect (not just the first one).
+void TestTranscriber::test_setConfigurationCanBeReapplied() {
+    OpenAiMockServer server;
+    QVERIFY(server.listen());
+    server.setHandler([](QTcpSocket& socket, const QByteArray&) {
+        writeJsonResponse(socket, 200, QByteArrayLiteral(R"({"text":"ok"})"));
+    });
+    OpenAiCompatibleTranscriber transcriber(QStringLiteral(""), QStringLiteral(""));
+
+    transcriber.setConfiguration(server.baseUrl(), QStringLiteral("first-key"));
+    QSignalSpy kTranscribedSpy(&transcriber, &TranscriptionProvider::transcribed);
+    transcriber.transcribe({0.0F});
+    QVERIFY(kTranscribedSpy.wait(kReplyTimeout));
+    QCOMPARE(server.lastRequestHeader("Authorization"), QByteArrayLiteral("Bearer first-key"));
+
+    transcriber.setConfiguration(server.baseUrl(), QStringLiteral("second-key"));
+    transcriber.transcribe({0.0F});
+    QVERIFY(kTranscribedSpy.wait(kReplyTimeout));
+    QCOMPARE(server.requestCount(), 2);
+    QCOMPARE(server.lastRequestHeader("Authorization"), QByteArrayLiteral("Bearer second-key"));
 }
 
 QTEST_GUILESS_MAIN(TestTranscriber)
