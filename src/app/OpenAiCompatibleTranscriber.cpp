@@ -1,6 +1,7 @@
 #include "app/OpenAiCompatibleTranscriber.h"
 
 #include <QByteArray>
+#include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -87,10 +88,13 @@ OpenAiCompatibleTranscriber::~OpenAiCompatibleTranscriber() {
 
 void OpenAiCompatibleTranscriber::transcribe(std::vector<float> samples) {
     if (baseUrl_.isEmpty() || model_.isEmpty()) {
+        qWarning()
+                << "Transcription skipped: endpoint or model is not configured (set POLZA_BASE_URL / POLZA_STT_MODEL)";
         scheduleFailure(ProviderError::kUnknown, QStringLiteral("Transcriber is not configured: set POLZA_BASE_URL"));
         return;
     }
     if (apiKey_.isEmpty()) {
+        qWarning() << "Transcription skipped: API key is not configured (set POLZA_API_KEY or save it in settings)";
         scheduleFailure(ProviderError::kAuthentication, QStringLiteral("API key is not configured: set POLZA_API_KEY"));
         return;
     }
@@ -117,8 +121,15 @@ void OpenAiCompatibleTranscriber::transcribe(std::vector<float> samples) {
     QNetworkRequest request{QUrl(transcribeUrl())};
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request.setRawHeader(QByteArrayLiteral("Authorization"), QByteArrayLiteral("Bearer ") + apiKey_.toUtf8());
+    qInfo().noquote() << "Transcription request:" << transcribeUrl() << "model=" << model_
+                      << "samples=" << samples.size() << "wavBytes=" << kWav.size();
     reply_ = network_->post(request, QJsonDocument(kPayload).toJson(QJsonDocument::Compact));
     connect(reply_, &QNetworkReply::finished, this, &OpenAiCompatibleTranscriber::onReplyFinished);
+}
+
+void OpenAiCompatibleTranscriber::setConfiguration(QString baseUrl, QString apiKey) {
+    baseUrl_ = std::move(baseUrl);
+    apiKey_ = std::move(apiKey);
 }
 
 void OpenAiCompatibleTranscriber::cancel() {
@@ -158,27 +169,35 @@ void OpenAiCompatibleTranscriber::onReplyFinished() {
     // A transport failure leaves the HTTP status unset; the reply's own error
     // string is the most precise detail available.
     if (kStatus == 0) {
+        qWarning() << "Transcription transport failure:" << reply->errorString();
         emit failed(ProviderError::kNetwork, reply->errorString());
         return;
     }
     if (kStatus < 200 || kStatus >= 300) {
+        qWarning().noquote() << "Transcription HTTP" << kStatus << QString::fromUtf8(kBody).left(200);
         emit failed(classifyHttpStatus(kStatus), httpErrorMessage(kStatus, kBody));
         return;
     }
+    emitResult(kBody);
+}
 
+void OpenAiCompatibleTranscriber::emitResult(const QByteArray& body) {
     QJsonParseError parseError{};
-    const QJsonDocument kDocument = QJsonDocument::fromJson(kBody, &parseError);
+    const QJsonDocument kDocument = QJsonDocument::fromJson(body, &parseError);
     if (parseError.error != QJsonParseError::NoError || !kDocument.isObject()) {
+        qWarning() << "Transcription malformed response:" << parseError.errorString();
         emit failed(ProviderError::kInvalidResponse,
                     QStringLiteral("Malformed transcription response: ") + parseError.errorString());
         return;
     }
     const QJsonValue kText = kDocument.object().value(QStringLiteral("text"));
     if (!kText.isString()) {
+        qWarning().noquote() << "Transcription response is missing the 'text' field:" << body;
         emit failed(ProviderError::kInvalidResponse,
                     QStringLiteral("Transcription response is missing the 'text' field"));
         return;
     }
+    qInfo() << "Transcription succeeded:" << kText.toString();
     emit transcribed(kText.toString());
 }
 

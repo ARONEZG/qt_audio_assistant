@@ -1,5 +1,6 @@
 #include "domain/AudioCapture.h"
 
+#include <QDebug>
 #include <optional>
 
 #include "audio/AudioBuffer.h"
@@ -37,7 +38,15 @@ void AudioCapture::transcribeLast() {
     // buffer. An empty buffer produces an empty block: it is still a request, and
     // whether the backend accepts it is the backend's decision.
     clearError();
-    transcriber_.transcribe(buffer_.snapshot());
+    std::vector<float> snapshot = buffer_.snapshot();
+    if (snapshot.empty()) {
+        qWarning() << "Transcribing an empty buffer: no audio captured yet (is background capture on?)";
+    } else {
+        const double kSeconds =
+                static_cast<double>(snapshot.size()) / static_cast<double>(source_.format().sampleRate());
+        qInfo() << "Transcribing" << snapshot.size() << "samples (" << kSeconds << "s)";
+    }
+    transcriber_.transcribe(std::move(snapshot));
 }
 
 audio::AudioFormat AudioCapture::format() const noexcept {
@@ -53,10 +62,12 @@ bool AudioCapture::hasError() const noexcept {
 }
 
 void AudioCapture::onTranscribed(const QString& text) {
+    qInfo() << "Transcription relayed:" << text.size() << "characters";
     emit transcribed(text);
 }
 
 void AudioCapture::onFailed(ProviderError error, const QString& message) {
+    qWarning() << "Transcription failed (error" << static_cast<int>(error) << "):" << message;
     // Cancellation is not a failure (mirrors Chat): it is relayed but leaves no
     // error on the view.
     if (const std::optional<QString> kText = providerFailureText(error, message); kText.has_value()) {

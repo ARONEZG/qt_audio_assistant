@@ -129,6 +129,24 @@ void wireCaptureSwitch(Chat& chat, AudioCapture& audioCapture, audio::MiniaudioC
     });
 }
 
+// Keeps the transcriber's endpoint/key in sync with the live settings and logs
+// the startup configuration once. The API key is a session secret entered in the
+// settings panel (never persisted), so a transcriber frozen at startup would
+// otherwise keep an empty or stale key and reject every request. The speech-to-
+// text model is a separate concern (POLZA_STT_MODEL) and stays fixed.
+void wireTranscriberSettings(ProviderSettings& settings,
+                             OpenAiCompatibleTranscriber& transcriber,
+                             const QString& sttModel) {
+    QObject::connect(&settings, &ProviderSettings::saved, &transcriber, [&settings, &transcriber] {
+        transcriber.setConfiguration(settings.baseUrl(), settings.apiKey());
+        qInfo() << "Speech-to-text configuration updated from saved provider settings";
+    });
+    qInfo().noquote() << "Speech-to-text:" << "baseUrl="
+                      << (settings.baseUrl().isEmpty() ? QStringLiteral("<unset>") : settings.baseUrl())
+                      << "apiKey=" << (settings.apiKey().isEmpty() ? QStringLiteral("<unset>") : QStringLiteral("set"))
+                      << "model=" << sttModel;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -165,13 +183,10 @@ int main(int argc, char* argv[]) {
     const audio::AudioFormat kCaptureFormat(16000U, 1U, audio::SampleFormat::kFloat32);
     audio::AudioBuffer captureBuffer(std::chrono::seconds(30), kCaptureFormat);
     audio::MiniaudioCaptureSource captureSource(captureBuffer);
-    // The transcriber is built once from the startup configuration. Unlike the
-    // chat provider recipe (which reads the live ProviderSettings at each mint),
-    // it does not pick up an endpoint or key entered in the settings panel until
-    // it is rebuilt; re-reading live settings for speech-to-text belongs to a
-    // later increment (the facade only relays to the provider it is handed).
-    OpenAiCompatibleTranscriber transcriber(settings.baseUrl(), settings.apiKey(), sttModelFromEnvironment());
+    const QString kSttModel = sttModelFromEnvironment();
+    OpenAiCompatibleTranscriber transcriber(settings.baseUrl(), settings.apiKey(), kSttModel);
     AudioCapture audioCapture(captureBuffer, captureSource, transcriber);
+    wireTranscriberSettings(settings, transcriber, kSttModel);
 
     // The chat's capture switch drives the pipeline. Capture does not start at
     // launch: it runs only while the switch is on.
