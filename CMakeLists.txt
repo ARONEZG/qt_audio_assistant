@@ -89,9 +89,9 @@ if(DEFINED CONAN_BUILD_DIR)
     _audio_assistant_find_conan_toolchain("${_conan_dir}" _conan_toolchain)
 
     if(NOT _conan_toolchain)
-        # The managed dependencies (spdlog, miniaudio, llmqore) are not installed
-        # for this build type yet. Install them automatically so one-click IDE
-        # builds work.
+        # The managed dependencies (spdlog, miniaudio, llmqore, sqlite3) are not
+        # installed for this build type yet. Install them automatically so
+        # one-click IDE builds work.
         find_program(_conan_exe conan)
         if(NOT _conan_exe)
             message(FATAL_ERROR
@@ -276,6 +276,21 @@ find_package(miniaudio REQUIRED)
 # project's -Weverything -Werror profile does not flag the vendored header.
 set_target_properties(miniaudio::miniaudio PROPERTIES
     INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${miniaudio_INCLUDE_DIRS}"
+)
+
+# ── SQLite (persistence) ────────────────────────────────────
+# sqlite3 is a managed Conan dependency (sqlite3/3.54.0 in conanfile.py) — the
+# single source of truth for its version. It is the self-contained embedded SQL
+# engine (public domain / Unlicense) that the future persistence layer builds
+# on; the layer itself is not implemented yet, so today only the dependency and
+# its compile/link smoke test exist. See docs/ADR-persistence.md.
+find_package(SQLite3 REQUIRED)
+
+# sqlite3.h is third-party code. As with miniaudio.h, repeat Conan's include
+# directory as a SYSTEM include directory so the -Weverything -Werror profile
+# does not report diagnostics inside the vendored header.
+set_target_properties(SQLite::SQLite3 PROPERTIES
+    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${SQLite3_INCLUDE_DIRS}"
 )
 
 # ── Audio library ───────────────────────────────────────────
@@ -595,6 +610,34 @@ target_link_libraries(tst_audio_smoke PRIVATE
 
 add_test(NAME tst_audio_smoke COMMAND tst_audio_smoke)
 set_tests_properties(tst_audio_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── SQLite smoke test ───────────────────────────────────────
+# Proves the sqlite3 dependency configures, compiles and links (see the test file
+# header for the exact scope) without adding a persistence layer: it opens an
+# in-memory database, runs one statement and reads the value back. No file on
+# disk is created.
+qt_add_executable(tst_sqlite_smoke
+    tests/tst_sqlite_smoke.cpp
+)
+
+set_target_properties(tst_sqlite_smoke PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+# SQLite::SQLite3 is linked explicitly so the test's own <sqlite3.h> include is
+# resolved as SYSTEM and the library (plus the system libraries the Conan recipe
+# declares: pthread/dl/m on Linux) actually resolves at link time.
+target_link_libraries(tst_sqlite_smoke PRIVATE
+    audio-assistant-strict
+    SQLite::SQLite3
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_sqlite_smoke COMMAND tst_sqlite_smoke)
+set_tests_properties(tst_sqlite_smoke PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 

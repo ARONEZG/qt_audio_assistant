@@ -6,11 +6,17 @@ ConanCenter lacks pre-built Qt binaries for Linux/Clang. On Linux, Qt is
 instead installed per-user with aqtinstall into ``~/Qt/6.8.3/gcc_64`` and
 located by CMake via ``-DCMAKE_PREFIX_PATH``.
 
-spdlog (logging), LLMQore (LLM client) and miniaudio (audio capture) are the
-managed dependencies and Conan is the single source of truth for their versions
-(spdlog/1.14.1, llmqore/0.8.0, miniaudio/0.11.25). Local builds,
-``scripts/ci-check.sh`` and CI all run ``conan install`` and configure CMake with
-``-DCONAN_BUILD_DIR``; no system ``libspdlog-dev`` is used.
+spdlog (logging), LLMQore (LLM client), miniaudio (audio capture) and SQLite
+(persistence) are the managed dependencies and Conan is the single source of
+truth for their versions (spdlog/1.14.1, llmqore/0.8.0, miniaudio/0.11.25,
+sqlite3/3.54.0). Local builds, ``scripts/ci-check.sh`` and CI all run
+``conan install`` and configure CMake with ``-DCONAN_BUILD_DIR``; no system
+``libspdlog-dev`` or ``libsqlite3-dev`` is used.
+
+sqlite3 is the self-contained embedded SQL engine (public domain / Unlicense).
+It is consumed from ConanCenter as a pre-built library exposing the
+``SQLite::SQLite3`` CMake target; the persistence layer that uses it is not
+implemented yet (the dependency and a compile/link smoke test are).
 
 miniaudio is a single-header C library (Unlicense/MIT-0) that provides
 microphone capture on Windows/Linux/macOS plus native loopback capture of the
@@ -57,10 +63,10 @@ Usage (from the project root, Linux with Clang 18 and Ninja):
     cmake --build build
     ctest --test-dir build --output-on-failure
 
-    # Conan is mandatory: spdlog, LLMQore and miniaudio are resolved through
-    # the Conan-generated toolchain (find_package(spdlog 1.14 REQUIRED),
-    # find_package(LLMQore REQUIRED) and find_package(miniaudio REQUIRED) in
-    # CMakeLists.txt).
+    # Conan is mandatory: spdlog, LLMQore, miniaudio and sqlite3 are resolved
+    # through the Conan-generated toolchain (find_package(spdlog 1.14 REQUIRED),
+    # find_package(LLMQore REQUIRED), find_package(miniaudio REQUIRED) and
+    # find_package(SQLite3 REQUIRED) in CMakeLists.txt).
 """
 
 from conan import ConanFile
@@ -117,7 +123,10 @@ class AudioAssistantConan(ConanFile):
     # * miniaudio — audio capture (microphone, and system loopback on
     #   Windows/Linux), fetched from ConanCenter; header-only, single
     #   package-id, no transitive dependencies. See docs/ADR-audio-capture.md.
-    requires = "spdlog/1.14.1", "llmqore/0.8.0", "miniaudio/0.11.25"
+    # * sqlite3 — persistence (embedded SQL database), fetched from
+    #   ConanCenter; exposes the SQLite::SQLite3 CMake target. The persistence
+    #   layer is not implemented yet — see docs/ADR-persistence.md.
+    requires = "spdlog/1.14.1", "llmqore/0.8.0", "miniaudio/0.11.25", "sqlite3/3.54.0"
 
     def layout(self):
         cmake_layout(self)
