@@ -42,6 +42,11 @@ class Chat : public QAbstractListModel {
     Q_PROPERTY(QString providerName READ providerName CONSTANT)
     Q_PROPERTY(QString streamingText READ streamingText NOTIFY streamingTextChanged)
     Q_PROPERTY(bool streaming READ isStreaming NOTIFY stateChanged)
+    // Last failed request, presented to the user. Transient like streamingText:
+    // an accepted send() starts a new request and clears it. Cancellation is not
+    // a failure, so a cancelled answer never sets it.
+    Q_PROPERTY(QString errorText READ errorText NOTIFY errorTextChanged)
+    Q_PROPERTY(bool hasError READ hasError NOTIFY errorTextChanged)
 
 public:
     // The message roles a delegate binds to. Qt roles are plain ints by design,
@@ -63,6 +68,8 @@ public:
     [[nodiscard]] const std::vector<Message>& messages() const noexcept;
     [[nodiscard]] QString streamingText() const;
     [[nodiscard]] bool isStreaming() const noexcept;
+    [[nodiscard]] QString errorText() const;
+    [[nodiscard]] bool hasError() const noexcept;
     [[nodiscard]] QString providerId() const;
     [[nodiscard]] QString providerName() const;
 
@@ -78,6 +85,7 @@ public:
 signals:
     void streamingTextChanged();
     void stateChanged();
+    void errorTextChanged();
     void replyReceived(const Message& message);
     // Typed failure so the presentation layer can branch (retry on Network,
     // prompt on Authentication, ...).
@@ -94,6 +102,7 @@ private:
     void stopStreaming();
     void setStreamingText(const QString& text);
     void setStreaming(bool streaming);
+    void setErrorText(const QString& text);
 
     void onChunkReceived(const QString& chunk);
     void onAnswerCompleted(const Message& message);
@@ -104,6 +113,7 @@ private:
     std::unique_ptr<Provider> provider_;
     std::vector<Message> messages_;
     QString streamingText_;
+    QString errorText_;
     bool isStreaming_ = false;
     Answer* currentAnswer_ = nullptr;
 };
