@@ -16,11 +16,14 @@
 # генерация и Qt build helpers исключаются из анализа явно.
 #
 # Скорость:
-#   * clang-tidy/clazy распараллелены по числу CPU (ANALYSIS_JOBS);
+#   * clang-tidy/clazy распараллелены по числу CPU, но по умолчанию
+#     ограничены доступной памятью (ANALYSIS_JOBS переопределяет);
 #   * анализируются только translation units (.cpp) — заголовки
 #     проверяются через включающие их TU (HeaderFilterRegex уже
 #     ограничивает диагностику src/tests), поэтому отдельный прогон
 #     по .h только замедлял работу;
+#   * ANALYSIS_FILES позволяет ограничить clang-tidy/clazy списком
+#     изменённых файлов (используется ci-check.sh --fast);
 #   * CodeChecker получает отфильтрованную базу (только src/ + tests/).
 #
 # Использование:
@@ -60,17 +63,53 @@ info()  { echo -e "[INFO] $*"; }
 
 # ── Parallelism ─────────────────────────────────────────────
 # Analyzers are single-threaded; one process per translation unit is the
-# cheapest way to use the machine.
+# cheapest way to use the machine — but clang-tidy/clazy are memory-hungry
+# (~1–2 GiB per process), so blindly using `nproc` on a busy laptop swaps and
+# ends up slower. The default is capped by available memory; ANALYSIS_JOBS
+# overrides it.
 ANALYSIS_JOBS="${ANALYSIS_JOBS:-}"
-analysis_jobs() {
-    if [ -n "$ANALYSIS_JOBS" ]; then
-        echo "$ANALYSIS_JOBS"
-    elif command -v nproc &>/dev/null; then
+
+_cpu_count() {
+    if command -v nproc &>/dev/null; then
         nproc
     elif command -v sysctl &>/dev/null; then
         sysctl -n hw.ncpu 2>/dev/null || echo 4
     else
         echo 4
+    fi
+}
+
+_mem_available_gb() {
+    # Linux only; returns 0 ("unknown") elsewhere, so callers fall back to the
+    # CPU count. macOS/Windows do not expose /proc/meminfo and take that path.
+    if [ -r /proc/meminfo ] && command -v awk &>/dev/null; then
+        awk '/^MemAvailable:/ {printf "%.0f", $2/1048576; exit}' /proc/meminfo 2>/dev/null
+    else
+        echo 0
+    fi
+}
+
+# Memory-aware cap for memory-hungry tools: ~2 GiB per job, never more than the
+# CPU count. Returns the CPU count when available memory cannot be read.
+mem_aware_jobs() {
+    local cpu mem jobs
+    cpu=$(_cpu_count)
+    mem=$(_mem_available_gb)
+    if [ "$mem" -gt 0 ]; then
+        jobs=$(( mem / 2 ))
+        [ "$jobs" -lt 1 ] && jobs=1
+        [ "$jobs" -gt "$cpu" ] && jobs=$cpu
+        echo "$jobs"
+    else
+        echo "$cpu"
+    fi
+}
+
+analysis_jobs() {
+    if [ -n "$ANALYSIS_JOBS" ]; then
+        echo "$ANALYSIS_JOBS"
+    else
+        mem_aware_jobs
     fi
 }
 
@@ -250,6 +289,17 @@ cpp_sources() {
 cpp_impl_sources() {
     find "$PROJECT_ROOT/src" "$PROJECT_ROOT/tests" \
         -name '*.cpp' 2>/dev/null | sort
+}
+
+# C++ files to lint. ANALYSIS_FILES (exported by ci-check.sh --fast) overrides
+# the default "all translation units" so the fast path checks only changed
+# files; headers are filtered out (they are covered through their TUs).
+lint_sources() {
+    if [ -n "${ANALYSIS_FILES:-}" ]; then
+        printf '%s\n' "${ANALYSIS_FILES}" | grep -E '\.cpp$' || true
+    else
+        cpp_impl_sources
+    fi
 }
 
 qml_sources() {
@@ -450,7 +500,7 @@ ensure_compile_commands() {
         fail "CMake configure (Debug) failed"
         return 1
     }
-    cmake --build "$build_dir" -j"$(analysis_jobs)" 2>&1 | tail -3 || {
+    cmake --build "$build_dir" -j"$(_cpu_count)" 2>&1 | tail -3 || {
         fail "Debug build failed"
         return 1
     }
@@ -481,7 +531,7 @@ step_clang_tidy() {
     build_dir=$(ensure_compile_commands) || return 1
 
     local files
-    files=$(cpp_impl_sources)
+    files=$(lint_sources)
     if [ -z "$files" ]; then
         warn "No source files found"
         return 0
@@ -514,7 +564,7 @@ step_clazy() {
     build_dir=$(ensure_compile_commands) || return 1
 
     local files
-    files=$(cpp_impl_sources)
+    files=$(lint_sources)
     if [ -z "$files" ]; then
         warn "No source files found"
         return 0
@@ -753,7 +803,8 @@ static-analysis.sh — единый скрипт статического ана
   scan-build, iwyu, CodeChecker — только в режиме --deep.
 
 Переменные окружения:
-  ANALYSIS_JOBS   число параллельных процессов анализа (по умолчанию nproc)
+  ANALYSIS_JOBS   число параллельных процессов анализа (по умолчанию memory-aware)
+  ANALYSIS_FILES  список .cpp для clang-tidy/clazy (использует ci-check.sh --fast)
 EOF
 }
 
