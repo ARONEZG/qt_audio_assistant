@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import AudioAssistant
 
@@ -11,16 +13,19 @@ Item {
     id: root
 
     required property Chats chats
+    required property AudioCapture audioCapture
 
     Accessible.name: qsTr("Chat")
 
     Repeater {
         model: root.chats
         // The delegate's parent is the Repeater's parent (this Item), so it sizes
-        // itself to the view without reaching for the outer id.
+        // itself to the view without reaching for the outer id; the capture
+        // facade is passed down explicitly.
         delegate: ChatPanel {
             width: parent.width
             height: parent.height
+            audioCapture: root.audioCapture
         }
     }
 

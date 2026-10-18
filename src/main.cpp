@@ -10,13 +10,14 @@
 #include <memory>
 #include <vector>
 
-#include "app/AudioCapture.h"
 #include "app/OpenAiCompatibleProvider.h"
 #include "app/OpenAiCompatibleTranscriber.h"
 #include "app/PlaceholderProvider.h"
 #include "audio/AudioBuffer.h"
 #include "audio/AudioFormat.h"
 #include "audio/MiniaudioCaptureSource.h"
+#include "domain/AudioCapture.h"
+#include "domain/Chat.h"
 #include "domain/Chats.h"
 #include "domain/NewChat.h"
 #include "domain/ProviderConfigFile.h"
@@ -83,34 +84,49 @@ namespace {
     return kConfigured.isEmpty() ? QStringLiteral("openai/whisper-1") : kConfigured;
 }
 
-// Starts capture and reports the outcome honestly. A failure is logged, never
-// fatal: without a microphone the app still runs (the conversation UI works).
-// Health is read from the concrete source, so the AudioSource role interface
-// stays unchanged and the facade needs no status of its own.
-void startCapture(audio::MiniaudioCaptureSource& source) {
-    source.start();
-    if (source.lastError().has_value()) {
-        qWarning() << "Audio capture did not start: the microphone is unavailable; the app keeps running";
-    } else {
-        qInfo() << "Audio capture started (16 kHz, mono, f32)";
-    }
-}
+// The objects the QML module binds to, grouped so the loader takes one argument
+// instead of one per view model. Pointers rather than references: the guideline
+// forbids reference data members.
+struct Composition {
+    Chats* chats;
+    Providers* providers;
+    NewChat* newChat;
+    ProviderSettings* settings;
+    AudioCapture* audioCapture;
+};
 
 // Loads the root QML component and hands the composition objects to it. False
 // means the component could not be created and the caller exits non-zero.
-[[nodiscard]] bool loadMainQml(QQmlApplicationEngine& engine,
-                               Chats& chats,
-                               Providers& providers,
-                               NewChat& newChat,
-                               ProviderSettings& settings) {
+[[nodiscard]] bool loadMainQml(QQmlApplicationEngine& engine, const Composition& composition) {
     engine.setInitialProperties({
-            {QStringLiteral("chats"), QVariant::fromValue(&chats)},
-            {QStringLiteral("providers"), QVariant::fromValue(&providers)},
-            {QStringLiteral("newChat"), QVariant::fromValue(&newChat)},
-            {QStringLiteral("providerSettings"), QVariant::fromValue(&settings)},
+            {QStringLiteral("chats"), QVariant::fromValue(composition.chats)},
+            {QStringLiteral("providers"), QVariant::fromValue(composition.providers)},
+            {QStringLiteral("newChat"), QVariant::fromValue(composition.newChat)},
+            {QStringLiteral("providerSettings"), QVariant::fromValue(composition.settings)},
+            {QStringLiteral("audioCapture"), QVariant::fromValue(composition.audioCapture)},
     });
     engine.load(QUrl(QStringLiteral("qrc:/qt/qml/AudioAssistant/Main.qml")));
     return !engine.rootObjects().isEmpty();
+}
+
+// Starts/stops capture with the chat's switch and reports the outcome honestly.
+// A failed start reverts the switch, so the UI never claims to record when the
+// microphone is unavailable; health is read from the concrete source, so the
+// AudioSource role interface stays unchanged.
+void wireCaptureSwitch(Chat& chat, AudioCapture& audioCapture, audio::MiniaudioCaptureSource& source) {
+    QObject::connect(&chat, &Chat::backgroundCaptureChanged, &audioCapture, [&chat, &audioCapture, &source] {
+        if (!chat.isBackgroundCaptureEnabled()) {
+            audioCapture.stop();
+            return;
+        }
+        audioCapture.start();
+        if (source.lastError().has_value()) {
+            qWarning() << "Audio capture did not start: the microphone is unavailable; the switch is reverted";
+            chat.setBackgroundCaptureEnabled(false);
+        } else {
+            qInfo() << "Audio capture started (16 kHz, mono, f32)";
+        }
+    });
 }
 
 }  // namespace
@@ -149,18 +165,21 @@ int main(int argc, char* argv[]) {
     const audio::AudioFormat kCaptureFormat(16000U, 1U, audio::SampleFormat::kFloat32);
     audio::AudioBuffer captureBuffer(std::chrono::seconds(30), kCaptureFormat);
     audio::MiniaudioCaptureSource captureSource(captureBuffer);
-    startCapture(captureSource);
     // The transcriber is built once from the startup configuration. Unlike the
     // chat provider recipe (which reads the live ProviderSettings at each mint),
     // it does not pick up an endpoint or key entered in the settings panel until
-    // it is rebuilt; re-reading live settings for speech-to-text belongs to the
-    // increment that wires the capture controls (the facade only relays to the
-    // provider it is handed).
+    // it is rebuilt; re-reading live settings for speech-to-text belongs to a
+    // later increment (the facade only relays to the provider it is handed).
     OpenAiCompatibleTranscriber transcriber(settings.baseUrl(), settings.apiKey(), sttModelFromEnvironment());
-    // Non-const by convention like the other composition-root objects; its
-    // commands are driven by the global hotkey in a later increment.
-    AudioCapture audioCapture(captureBuffer, captureSource, transcriber);  // NOLINT(misc-const-correctness)
+    AudioCapture audioCapture(captureBuffer, captureSource, transcriber);
+
+    // The chat's capture switch drives the pipeline. Capture does not start at
+    // launch: it runs only while the switch is on.
+    if (Chat* chat = chats.at(0); chat != nullptr) {
+        wireCaptureSwitch(*chat, audioCapture, captureSource);
+    }
 
     QQmlApplicationEngine engine;
-    return loadMainQml(engine, chats, providers, newChat, settings) ? app.exec() : -1;
+    const Composition kComposition{&chats, &providers, &newChat, &settings, &audioCapture};
+    return loadMainQml(engine, kComposition) ? app.exec() : -1;
 }

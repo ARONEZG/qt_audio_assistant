@@ -18,6 +18,7 @@ ApplicationWindow {
     required property Providers providers
     required property NewChat newChat
     required property ProviderSettings providerSettings
+    required property AudioCapture audioCapture
 
     title: qsTr("Audio Assistant")
     visible: true
@@ -61,6 +62,7 @@ ApplicationWindow {
             Layout.fillHeight: true
             Layout.margins: Theme.spacingMedium
             chats: window.chats
+            audioCapture: window.audioCapture
         }
     }
 

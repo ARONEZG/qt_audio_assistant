@@ -44,4 +44,16 @@ RowLayout {
         root.submitted(input.text);
         input.clear();
     }
+
+    // Appends text the user did not type (a transcription) to the draft and puts
+    // the caret at the end, so it can be reviewed or edited before sending.
+    // Empty text leaves the draft untouched.
+    function insertText(text) {
+        if (text.length === 0) {
+            return;
+        }
+        input.text = input.text.length > 0 ? input.text + " " + text : text;
+        input.cursorPosition = input.text.length;
+        input.forceActiveFocus();
+    }
 }

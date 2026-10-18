@@ -113,8 +113,9 @@ void TestChat::test_initialState() {
     QCOMPARE(kChat.hasError(), false);
 }
 
-// The background-capture switch is a stub, but its default and its change
-// contract are part of the surface the chat exposes to the view.
+// The background-capture flag is plain chat state; its default and its change
+// contract are part of the surface the chat exposes to the view (the composition
+// root maps the change to the capture pipeline).
 void TestChat::test_backgroundCaptureDefaultsOff() {
     auto provider = std::make_unique<FakeProvider>();
     const Chat kChat(std::move(provider));

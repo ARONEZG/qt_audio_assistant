@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QtQml/qqmlregistration.h>
+
 #include <QObject>
 #include <QString>
 
@@ -24,6 +26,12 @@ class TranscriptionProvider;
 // source, buffer and transcriber are wired belongs to the composition root; that
 // is why they are constructor parameters rather than looked up or created here.
 //
+// It is also the QML view model of the capture controls: the chat drives
+// start()/stop() (through the composition root, which maps the chat's switch to
+// these commands) and the "transcribe" button calls transcribeLast() directly;
+// the terminal result reaches the view through transcribed()/failed() and the
+// hasError()/errorText() properties, mirroring how Chat surfaces a failed reply.
+//
 // Its whole contract is delegation plus relay:
 //
 //   start()/stop()       -> source.start()/stop()
@@ -38,11 +46,7 @@ class TranscriptionProvider;
 //
 // Configuration of the transcriber (endpoint, key, model) is fixed when the
 // composition root builds it and is *not* re-read per request: the facade holds
-// the injected provider by reference and never rebuilds it. Re-reading live
-// provider settings for speech-to-text - the way the chat recipe reads
-// ProviderSettings at each mint - is the composition root's decision and belongs
-// to the increment that wires the capture controls; until then the STT
-// endpoint/key are the ones resolved at startup.
+// the injected provider by reference and never rebuilds it.
 //
 // A transcribe request hands the transcriber an independent copy of the buffer's
 // current contents; the facade holds no audio of its own. An empty buffer is
@@ -51,6 +55,13 @@ class TranscriptionProvider;
 class AudioCapture : public QObject {
     Q_OBJECT
     Q_DISABLE_COPY_MOVE(AudioCapture)
+    QML_ELEMENT
+    QML_UNCREATABLE("Injected by the composition root")
+
+    // Last failed transcribe request, presented to the user. Transient: a new
+    // transcribeLast() clears it, like Chat clears its error on a new send().
+    Q_PROPERTY(QString errorText READ errorText NOTIFY errorTextChanged)
+    Q_PROPERTY(bool hasError READ hasError NOTIFY errorTextChanged)
 
 public:
     // The buffer, source and transcriber are borrowed and must outlive this
@@ -63,26 +74,38 @@ public:
                  QObject* parent = nullptr);
     ~AudioCapture() override;
 
-    // Starts/stops capture; a thin command over the injected source.
-    void start();
-    void stop();
+    // Starts/stops capture; a thin command over the injected source. Idempotent
+    // at the source (see the AudioSource contract).
+    Q_INVOKABLE void start();
+    Q_INVOKABLE void stop();
 
     // Sends a snapshot of the whole buffer to the transcriber. The terminal
     // result arrives later through transcribed()/failed() (the
     // TranscriptionProvider contract: transcribe() never emits synchronously).
-    // An empty buffer is sent as an empty block rather than skipped.
-    void transcribeLast();
+    // An empty buffer is sent as an empty block rather than skipped. Starts a new
+    // request, so a previous failure is cleared.
+    Q_INVOKABLE void transcribeLast();
 
     // The stream format of the injected source; a pure query.
     [[nodiscard]] audio::AudioFormat format() const noexcept;
+
+    [[nodiscard]] QString errorText() const;
+    [[nodiscard]] bool hasError() const noexcept;
 
 signals:
     // The transcriber's terminal signals, re-emitted unchanged.
     void transcribed(const QString& text);
     void failed(ProviderError error, const QString& message);
+    void errorTextChanged();
 
 private:
+    void onTranscribed(const QString& text);
+    void onFailed(ProviderError error, const QString& message);
+    void clearError();
+
     audio::AudioBuffer& buffer_;
     audio::AudioSource& source_;
     TranscriptionProvider& transcriber_;
+    QString errorText_;
+    bool hasError_ = false;
 };

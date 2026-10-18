@@ -4,37 +4,8 @@
 #include <optional>
 #include <utility>
 
+#include "domain/ProviderErrorText.h"
 #include "domain/SafeMarkdown.h"
-
-namespace {
-
-// One user-facing line for a typed failure. The summary names the kind of
-// failure; the provider's detail (HTTP status, network text) is appended when it
-// carries information. kCancelled is deliberately not a failure and yields no
-// value, so a cancelled answer can never surface as an error.
-std::optional<QString> failureText(ProviderError error, const QString& detail) {
-    if (error == ProviderError::kCancelled) {
-        return std::nullopt;
-    }
-
-    QString summary = QStringLiteral("Unexpected error");
-    if (error == ProviderError::kNetwork) {
-        summary = QStringLiteral("Network error");
-    } else if (error == ProviderError::kAuthentication) {
-        summary = QStringLiteral("Authentication failed");
-    } else if (error == ProviderError::kRateLimit) {
-        summary = QStringLiteral("Rate limit exceeded");
-    } else if (error == ProviderError::kInvalidResponse) {
-        summary = QStringLiteral("Invalid response from provider");
-    }
-
-    if (detail.isEmpty()) {
-        return summary;
-    }
-    return QStringLiteral("%1: %2").arg(summary, detail);
-}
-
-}  // namespace
 
 Chat::Chat(std::unique_ptr<Provider> provider, QObject* parent)
     : QAbstractListModel(parent), provider_(std::move(provider)) {
@@ -336,7 +307,7 @@ void Chat::onAnswerCompleted(const Message& message) {
 
 void Chat::onAnswerFailed(ProviderError error, const QString& detail) {
     stopStreaming();
-    if (const std::optional<QString> kText = failureText(error, detail); kText.has_value()) {
+    if (const std::optional<QString> kText = providerFailureText(error, detail); kText.has_value()) {
         setErrorText(*kText);
     }
     emit failed(error, detail);

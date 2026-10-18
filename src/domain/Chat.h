@@ -66,12 +66,10 @@ class Chat : public QAbstractListModel {
     // a failure, so a cancelled answer never sets it.
     Q_PROPERTY(QString errorText READ errorText NOTIFY errorTextChanged)
     Q_PROPERTY(bool hasError READ hasError NOTIFY errorTextChanged)
-    // Background-audio capture switch, toggled from the chat header. This is a
-    // stub: nothing consumes the flag yet. It is a chat property (not view
-    // state) because the intended wiring is for the chat to drive a capture
-    // source feeding a ring buffer and to drain that buffer on demand; keeping
-    // the switch here means the future logic already reads the right owner.
-    // The real wiring is tracked separately (see issue #34).
+    // Background-audio capture switch, toggled from the chat header. The flag is
+    // the chat's own state; the composition root connects its change to the
+    // capture pipeline (start/stop the source, and revert the flag when the
+    // microphone is unavailable), so the chat itself stays unaware of audio.
     Q_PROPERTY(bool backgroundCaptureEnabled READ isBackgroundCaptureEnabled WRITE setBackgroundCaptureEnabled NOTIFY
                        backgroundCaptureChanged)
 

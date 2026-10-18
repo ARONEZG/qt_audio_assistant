@@ -11,11 +11,16 @@
 #include <QUrl>
 #include <QVariant>
 #include <QtTest>
+#include <chrono>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include "FakeAudioSource.h"
 #include "FakeProvider.h"
+#include "FakeTranscriber.h"
+#include "audio/AudioBuffer.h"
+#include "domain/AudioCapture.h"
 #include "domain/Chat.h"
 #include "domain/Chats.h"
 #include "domain/Message.h"
@@ -119,8 +124,10 @@ QObject* findInItems(QQuickItem* root, const QString& name) {
 }
 
 // Everything a QML run needs, composed exactly as main() does it: a provider
-// list, a chat grid and the thin invokable that joins them. The provider is a
-// fake, so the test acts as the network and no real request is ever made.
+// list, the chats and the thin invokable that joins them, plus the capture
+// pipeline behind an AudioCapture facade (with a fake source and transcriber, so
+// no device or network is touched). The provider is a fake too, so the test acts
+// as the network and no real request is ever made.
 class Harness {
 public:
     Harness()
@@ -134,15 +141,29 @@ public:
                                         minted_.push_back(provider.get());
                                         return provider;
                                     })}),
-          newChat_(chats_, providers_) {
+          newChat_(chats_, providers_),
+          captureBuffer_(std::chrono::seconds(30), canonicalFormat()),
+          audioCapture_(captureBuffer_, captureSource_, transcriber_) {
         // Mirror main(): the application opens a single chat for the first
         // offered provider before the view is loaded.
-        (void)newChat_.open(QStringLiteral("fake"));
+        if (Chat* chat = newChat_.open(QStringLiteral("fake")); chat != nullptr) {
+            // Mirror main(): the chat's capture switch drives the pipeline. The
+            // fake source never fails, so main()'s revert-on-failure branch has no
+            // double here; the switch -> start/stop mapping is what is covered.
+            QObject::connect(chat, &Chat::backgroundCaptureChanged, &audioCapture_, [chat, this] {
+                if (chat->isBackgroundCaptureEnabled()) {
+                    audioCapture_.start();
+                } else {
+                    audioCapture_.stop();
+                }
+            });
+        }
         engine_.setInitialProperties({
                 {QStringLiteral("chats"), QVariant::fromValue(&chats_)},
                 {QStringLiteral("providers"), QVariant::fromValue(&providers_)},
                 {QStringLiteral("newChat"), QVariant::fromValue(&newChat_)},
                 {QStringLiteral("providerSettings"), QVariant::fromValue(&settings_)},
+                {QStringLiteral("audioCapture"), QVariant::fromValue(&audioCapture_)},
         });
         engine_.load(QUrl(QStringLiteral("qrc:/qt/qml/AudioAssistant/Main.qml")));
         // A delegate is only instantiated once the window is shown and polished;
@@ -165,6 +186,15 @@ public:
     [[nodiscard]] const std::vector<FakeProvider*>& minted() const noexcept {
         return minted_;
     }
+    [[nodiscard]] FakeAudioSource& captureSource() noexcept {
+        return captureSource_;
+    }
+    [[nodiscard]] FakeTranscriber& transcriber() noexcept {
+        return transcriber_;
+    }
+    [[nodiscard]] AudioCapture& capture() noexcept {
+        return audioCapture_;
+    }
     [[nodiscard]] QObject* root() const {
         return engine_.rootObjects().value(0);
     }
@@ -182,6 +212,14 @@ private:
     Providers providers_;
     Chats chats_;
     NewChat newChat_;
+    // Declaration order is a lifetime contract (as in main()): the buffer before
+    // the source that writes into it, and both before the facade that references
+    // them. They are declared before engine_, so the engine (and the QML objects
+    // that reference the facade) is destroyed first.
+    audio::AudioBuffer captureBuffer_;
+    FakeAudioSource captureSource_;
+    FakeTranscriber transcriber_;
+    AudioCapture audioCapture_;
     QQmlApplicationEngine engine_;
 };
 
@@ -230,7 +268,10 @@ private slots:
     void test_streamingTailStaysInsideTheChatPanel();
     void test_chatFailureShowsTheError();
     void test_backgroundCaptureToggleStartsOff();
-    void test_backgroundCaptureToggleUpdatesTheChat();
+    void test_backgroundCaptureToggleStartsAndStopsCapture();
+    void test_transcribeButtonIsDisabledWhileCaptureIsOff();
+    void test_transcribeButtonSendsTheBufferAndInsertsTheText();
+    void test_failedTranscriptionShowsTheCaptureError();
     void test_backgroundCaptureToggleStaysInSyncAfterUserToggle();
     void test_providerSelectionSwitchesTheOpenChat();
     void test_providerSettingsFieldsAreBound();
@@ -484,23 +525,89 @@ void TestQmlChat::test_backgroundCaptureToggleStartsOff() {
     QObject* toggle = harness.child(QStringLiteral("backgroundCaptureToggle"));
     QVERIFY(toggle != nullptr);
 
-    // The switch lives inside the chat and mirrors the chat's flag; it starts off.
+    // The switch lives inside the chat and mirrors the chat's flag; it starts off,
+    // so capture was never started at load.
     QCOMPARE(toggle->property("checked").toBool(), false);
     QCOMPARE(harness.chats().at(0)->isBackgroundCaptureEnabled(), false);
+    QCOMPARE(harness.captureSource().startCount(), 0);
 }
 
-void TestQmlChat::test_backgroundCaptureToggleUpdatesTheChat() {
+void TestQmlChat::test_backgroundCaptureToggleStartsAndStopsCapture() {
     Harness harness;
     QCoreApplication::processEvents();
     QObject* toggle = harness.child(QStringLiteral("backgroundCaptureToggle"));
     QVERIFY(toggle != nullptr);
 
-    // The toggle forwards its state to the chat; the flag itself is inert (a
-    // stub), but the binding must hold so the future capture logic reads it.
+    // Switching capture on forwards the flag to the chat and starts the source;
+    // switching it off stops it.
     QVERIFY(QMetaObject::invokeMethod(toggle, "toggle"));
-
     QCOMPARE(harness.chats().at(0)->isBackgroundCaptureEnabled(), true);
     QCOMPARE(toggle->property("checked").toBool(), true);
+    QCOMPARE(harness.captureSource().startCount(), 1);
+    QCOMPARE(harness.captureSource().stopCount(), 0);
+
+    QVERIFY(QMetaObject::invokeMethod(toggle, "toggle"));
+    QCOMPARE(harness.chats().at(0)->isBackgroundCaptureEnabled(), false);
+    QCOMPARE(harness.captureSource().startCount(), 1);
+    QCOMPARE(harness.captureSource().stopCount(), 1);
+}
+
+void TestQmlChat::test_transcribeButtonIsDisabledWhileCaptureIsOff() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    QObject* button = harness.child(QStringLiteral("transcribeButton"));
+    QVERIFY(button != nullptr);
+
+    // Transcribing the buffer is only meaningful while capture is on.
+    QCOMPARE(button->property("enabled").toBool(), false);
+
+    harness.chats().at(0)->setBackgroundCaptureEnabled(true);
+    QCoreApplication::processEvents();
+    QCOMPARE(button->property("enabled").toBool(), true);
+}
+
+void TestQmlChat::test_transcribeButtonSendsTheBufferAndInsertsTheText() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    harness.chats().at(0)->setBackgroundCaptureEnabled(true);
+    QCoreApplication::processEvents();
+    QObject* button = harness.child(QStringLiteral("transcribeButton"));
+    QVERIFY(button != nullptr);
+
+    harness.transcriber().succeedWith(QStringLiteral("hello from audio"));
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+
+    // The button asks the facade to transcribe the buffer ...
+    QTRY_COMPARE(harness.transcriber().callCount(), 1);
+    // ... and the recognized text lands in the draft for review.
+    QObject* input = harness.child(QStringLiteral("messageInput"));
+    QVERIFY(input != nullptr);
+    QTRY_VERIFY(input->property("text").toString().contains(QStringLiteral("hello from audio")));
+}
+
+void TestQmlChat::test_failedTranscriptionShowsTheCaptureError() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    harness.chats().at(0)->setBackgroundCaptureEnabled(true);
+    QCoreApplication::processEvents();
+    QObject* errorLabel = harness.child(QStringLiteral("captureError"));
+    QObject* button = harness.child(QStringLiteral("transcribeButton"));
+    QVERIFY(errorLabel != nullptr);
+    QVERIFY(button != nullptr);
+    QCOMPARE(errorLabel->property("visible").toBool(), false);
+
+    harness.transcriber().failWith(ProviderError::kAuthentication, QStringLiteral("invalid key"));
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+
+    // The facade exposes the already-formatted reason; the view mirrors it.
+    QTRY_COMPARE(errorLabel->property("visible").toBool(), true);
+    QVERIFY(errorLabel->property("text").toString().contains(QStringLiteral("invalid key")));
+    QCOMPARE(harness.capture().hasError(), true);
+
+    // A new request clears it (mirrors a failed chat reply).
+    harness.transcriber().succeedWith(QStringLiteral("ok"));
+    QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
+    QTRY_COMPARE(errorLabel->property("visible").toBool(), false);
 }
 
 void TestQmlChat::test_backgroundCaptureToggleStaysInSyncAfterUserToggle() {

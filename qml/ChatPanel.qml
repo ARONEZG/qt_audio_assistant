@@ -6,13 +6,15 @@ import AudioAssistant
 // The panel of the single open chat: a header with the provider name, the
 // background-audio switch and the stream controls, then the transcript and the
 // composer, all bound to a single Chat.
-// Public API: `chat`, injected by the view from the model's role. All the panel
-// does is bind the chat's state and forward the user's intentions (send, cancel,
-// toggle capture) to it - it holds no state of its own.
+// Public API: `chat`, injected by the view from the model's role, and
+// `audioCapture`, the capture-pipeline facade passed down by the view. The panel
+// only binds their state and forwards the user's intentions (send, cancel,
+// toggle capture, transcribe) - it holds no state of its own.
 Rectangle {
     id: root
 
     required property Chat chat
+    required property AudioCapture audioCapture
 
     objectName: "chatPanel"
     implicitWidth: Theme.panelMinimumWidth
@@ -20,6 +22,16 @@ Rectangle {
     color: Theme.surface
     radius: Theme.radius
     border.color: Theme.border
+
+    // A transcription is text the user did not type: it is appended to the draft
+    // so it can be reviewed or edited before sending. The facade never emits
+    // synchronously (the TranscriptionProvider contract), so this runs later.
+    Connections {
+        target: root.audioCapture
+        function onTranscribed(text) {
+            composer.insertText(text);
+        }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -40,9 +52,9 @@ Rectangle {
                 Accessible.name: root.chat.providerName
             }
 
-            // Placeholder switch for background audio capture. It only mirrors
-            // the chat's flag; the flag itself is inert until the capture
-            // pipeline is wired in (issue #34), so toggling it captures nothing.
+            // The capture switch. It sets the chat's flag; the composition root
+            // maps that flag to starting/stopping the capture pipeline (and
+            // reverts the flag if the microphone is unavailable).
             //
             // Two-way sync: the Binding element keeps `checked` following the
             // chat flag (and survives the control's own write on a click, unlike
@@ -63,6 +75,17 @@ Rectangle {
                     property: "checked"
                     value: root.chat.backgroundCaptureEnabled
                 }
+            }
+
+            // Sends the last N seconds of captured audio for recognition; the
+            // recognized text lands in the composer through onTranscribed above.
+            // Only meaningful while capture is on, so it follows the switch.
+            Button {
+                objectName: "transcribeButton"
+                text: qsTr("Transcribe")
+                enabled: root.chat.backgroundCaptureEnabled
+                Accessible.name: qsTr("Transcribe the buffered audio")
+                onClicked: root.audioCapture.transcribeLast()
             }
 
             BusyIndicator {
@@ -100,7 +123,23 @@ Rectangle {
             Accessible.name: root.chat.errorText
         }
 
+        // A failed transcription is reported the same way, from the facade's own
+        // error state (kept separate from a failed chat reply).
+        Text {
+            objectName: "captureError"
+            Layout.fillWidth: true
+            visible: root.audioCapture.hasError
+            text: root.audioCapture.errorText
+            color: Theme.error
+            font.pixelSize: Theme.fontSizeSmall
+            wrapMode: Text.Wrap
+            Accessible.role: Accessible.StaticText
+            Accessible.name: root.audioCapture.errorText
+        }
+
         Composer {
+            id: composer
+
             Layout.fillWidth: true
             busy: root.chat.streaming
             onSubmitted: text => root.chat.send(text)

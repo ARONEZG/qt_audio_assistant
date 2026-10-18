@@ -1,0 +1,77 @@
+#include "domain/AudioCapture.h"
+
+#include <optional>
+
+#include "audio/AudioBuffer.h"
+#include "audio/AudioSource.h"
+#include "domain/ProviderErrorText.h"
+#include "domain/TranscriptionProvider.h"
+
+AudioCapture::AudioCapture(audio::AudioBuffer& buffer,
+                           audio::AudioSource& source,
+                           TranscriptionProvider& transcriber,
+                           QObject* parent)
+    : QObject(parent), buffer_(buffer), source_(source), transcriber_(transcriber) {
+    // The transcriber's terminal signals are relayed through this object's own
+    // slots, which also fold a failure into the view state; binding both to
+    // `this` means a transcriber that outlives the facade can never reach a
+    // destroyed receiver.
+    connect(&transcriber_, &TranscriptionProvider::transcribed, this, &AudioCapture::onTranscribed);
+    connect(&transcriber_, &TranscriptionProvider::failed, this, &AudioCapture::onFailed);
+}
+
+AudioCapture::~AudioCapture() = default;
+
+void AudioCapture::start() {
+    source_.start();
+}
+
+void AudioCapture::stop() {
+    source_.stop();
+}
+
+void AudioCapture::transcribeLast() {
+    // A new request supersedes the failure of the previous one (mirrors
+    // Chat::send). The snapshot is an independent copy, so the transcriber owns
+    // the block it is handed and the capture callback keeps writing into the
+    // buffer. An empty buffer produces an empty block: it is still a request, and
+    // whether the backend accepts it is the backend's decision.
+    clearError();
+    transcriber_.transcribe(buffer_.snapshot());
+}
+
+audio::AudioFormat AudioCapture::format() const noexcept {
+    return source_.format();
+}
+
+QString AudioCapture::errorText() const {
+    return errorText_;
+}
+
+bool AudioCapture::hasError() const noexcept {
+    return hasError_;
+}
+
+void AudioCapture::onTranscribed(const QString& text) {
+    emit transcribed(text);
+}
+
+void AudioCapture::onFailed(ProviderError error, const QString& message) {
+    // Cancellation is not a failure (mirrors Chat): it is relayed but leaves no
+    // error on the view.
+    if (const std::optional<QString> kText = providerFailureText(error, message); kText.has_value()) {
+        errorText_ = *kText;
+        hasError_ = true;
+        emit errorTextChanged();
+    }
+    emit failed(error, message);
+}
+
+void AudioCapture::clearError() {
+    if (!hasError_) {
+        return;
+    }
+    errorText_.clear();
+    hasError_ = false;
+    emit errorTextChanged();
+}
