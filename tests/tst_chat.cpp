@@ -74,7 +74,9 @@ private slots:
     void test_streamingTextIsNotAModelRow();
     void test_markupRoleKeepsUserTextVerbatim();
     void test_markupRoleSanitisesAssistantText();
+    void test_markupRoleIsMemoisedAcrossReads();
     void test_streamingMarkupSanitisesLiveAnswer();
+    void test_streamingMarkupIsRecomputedOnlyWhenTextChanges();
 };
 
 TestChat::TestChat(QObject* parent) : QObject(parent) {
@@ -523,6 +525,42 @@ void TestChat::test_streamingMarkupSanitisesLiveAnswer() {
     const QString kMarkup = chat.streamingMarkup();
     QVERIFY(kMarkup.contains(QStringLiteral("**bold**")));
     QVERIFY(!hasUnescapedAngleBracket(kMarkup));
+}
+
+void TestChat::test_markupRoleIsMemoisedAcrossReads() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    fake->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("**bold** <script>x</script>")));
+
+    // The display markup is stable across the many reads a view performs.
+    const QString kFirst = chat.data(chat.index(1), Chat::kMarkupRole).toString();
+    const QString kSecond = chat.data(chat.index(1), Chat::kMarkupRole).toString();
+    QCOMPARE(kFirst, kSecond);
+
+    // Appending another row must not shift or invalidate an earlier row's cache.
+    chat.send(QStringLiteral("again"));
+    fake->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("second")));
+    QCOMPARE(chat.data(chat.index(1), Chat::kMarkupRole).toString(), kFirst);
+}
+
+void TestChat::test_streamingMarkupIsRecomputedOnlyWhenTextChanges() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    fake->lastAnswer()->appendChunk(QStringLiteral("**bold**"));
+
+    const QString kFirst = chat.streamingMarkup();
+    // Repeated reads of the same live text return the memoised value.
+    QCOMPARE(chat.streamingMarkup(), kFirst);
+    QVERIFY(chat.streamingMarkup().contains(QStringLiteral("**bold**")));
+
+    // A new chunk invalidates the memo and is sanitised again.
+    fake->lastAnswer()->appendChunk(QStringLiteral(" <img src=x>"));
+    QVERIFY(chat.streamingMarkup() != kFirst);
+    QVERIFY(!hasUnescapedAngleBracket(chat.streamingMarkup()));
 }
 
 // The chat model exposes sanitised Markdown (SafeMarkdown), which uses

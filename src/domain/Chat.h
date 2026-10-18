@@ -7,8 +7,10 @@
 #include <QHash>
 #include <QObject>
 #include <QString>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "domain/Message.h"
@@ -105,6 +107,8 @@ signals:
 
 private:
     [[nodiscard]] bool isValidRow(int index) const noexcept;
+    // Display text of one row, sanitised on first request and memoised.
+    [[nodiscard]] QString markupAt(std::size_t row) const;
 
     void appendMessage(const Message& message);
     void startStreaming();
@@ -124,7 +128,16 @@ private:
 
     std::unique_ptr<Provider> provider_;
     std::vector<Message> messages_;
+    // Display markup memoised per row and aligned index-for-index with messages_.
+    // data(kMarkupRole) is queried many times per row while a view scrolls or
+    // lays out; without the cache every query would re-parse the message. Filled
+    // lazily so a headless consumer that never asks for markup never pays for it.
+    mutable std::vector<std::optional<QString>> markupCache_;
     QString streamingText_;
+    // Memoised streaming markup: recomputed only when the live text changes, so a
+    // view that reads the property several times per chunk sanitises once.
+    mutable QString streamingMarkupCache_;
+    mutable bool streamingMarkupDirty_ = false;
     QString errorText_;
     bool hasError_ = false;
     bool isStreaming_ = false;
