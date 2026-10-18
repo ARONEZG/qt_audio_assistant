@@ -2,6 +2,7 @@
 #include <QGuiApplication>
 #include <QMetaObject>
 #include <QObject>
+#include <QPointer>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -135,6 +136,9 @@ public:
                                         return provider;
                                     })}),
           newChat_(chats_, providers_) {
+        // Mirror main(): the application opens a single chat for the first
+        // offered provider before the view is loaded.
+        (void)newChat_.open(QStringLiteral("fake"));
         engine_.setInitialProperties({
                 {QStringLiteral("chats"), QVariant::fromValue(&chats_)},
                 {QStringLiteral("providers"), QVariant::fromValue(&providers_)},
@@ -152,9 +156,6 @@ public:
     }
     [[nodiscard]] const Chats& chats() const noexcept {
         return chats_;
-    }
-    [[nodiscard]] NewChat& newChat() noexcept {
-        return newChat_;
     }
     [[nodiscard]] ProviderSettings& settings() noexcept {
         return settings_;
@@ -193,6 +194,20 @@ QObject* Harness::child(const QString& name) const {
     return window == nullptr ? nullptr : findInItems(window->contentItem(), name);
 }
 
+// Opens the settings dialog and returns it, so the test drives it the way a user
+// would before looking up or touching its controls.
+[[nodiscard]] QObject* openSettingsDialog(Harness& harness) {
+    QObject* dialog = harness.child(QStringLiteral("settingsDialog"));
+    if (dialog == nullptr) {
+        return nullptr;
+    }
+    if (!QMetaObject::invokeMethod(dialog, "open")) {
+        return nullptr;
+    }
+    QCoreApplication::processEvents();
+    return dialog;
+}
+
 }  // namespace
 
 // Offscreen smoke tests for the QML layer: the real module is loaded and driven
@@ -206,7 +221,8 @@ public:
 
 private slots:
     void test_loadsMainComponent();
-    void test_addChatButtonCreatesAChat();
+    void test_openChatIsShownOnce();
+    void test_settingsGearOpensTheDialog();
     void test_sendButtonForwardsTypedTextToTheChat();
     void test_streamingTailShowsTheLiveReply();
     void test_messageDelegateRendersAssistantMarkdownAndUserPlainText();
@@ -214,9 +230,13 @@ private slots:
     void test_streamingTailFollowsEachAnswer();
     void test_streamingTailStaysInsideTheChatPanel();
     void test_chatFailureShowsTheError();
+    void test_backgroundCaptureToggleStartsOff();
+    void test_backgroundCaptureToggleUpdatesTheChat();
+    void test_providerSelectionRebuildsTheChat();
     void test_providerSettingsFieldsAreBound();
     void test_apiKeyFieldIsMasked();
     void test_saveButtonPersistsProviderSettings();
+    void test_saveButtonRebuildsTheChat();
 };
 
 TestQmlChat::TestQmlChat(QObject* parent) : QObject(parent) {
@@ -228,27 +248,40 @@ void TestQmlChat::test_loadsMainComponent() {
     const Harness kHarness;
 
     QVERIFY(kHarness.root() != nullptr);
-    QCOMPARE(kHarness.chats().count(), 0);
+    // Mirrors main(): a single chat is opened for the first offered provider.
+    QCOMPARE(kHarness.chats().count(), 1);
 }
 
-void TestQmlChat::test_addChatButtonCreatesAChat() {
+void TestQmlChat::test_openChatIsShownOnce() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    auto* window = qobject_cast<QQuickWindow*>(harness.root());
+    QVERIFY(window != nullptr);
+
+    QCOMPARE(harness.chats().count(), 1);
+    QVERIFY(QTest::qWaitFor(
+            [window] { return collectItems(window->contentItem(), QStringLiteral("chatPanel")).size() == 1; }));
+}
+
+void TestQmlChat::test_settingsGearOpensTheDialog() {
     const Harness kHarness;
-    QVERIFY(kHarness.root() != nullptr);
-    QObject* addButton = kHarness.child(QStringLiteral("addChatButton"));
-    QVERIFY(addButton != nullptr);
+    QObject* gear = kHarness.child(QStringLiteral("settingsButton"));
+    QVERIFY(gear != nullptr);
+    QObject* dialog = kHarness.child(QStringLiteral("settingsDialog"));
+    QVERIFY(dialog != nullptr);
+    // The settings live in a dialog, not in the chat: it is closed until asked.
+    QCOMPARE(dialog->property("visible").toBool(), false);
 
-    QVERIFY(QMetaObject::invokeMethod(addButton, "clicked"));
+    QVERIFY(QMetaObject::invokeMethod(gear, "clicked"));
+    QCoreApplication::processEvents();
 
-    QCOMPARE(kHarness.chats().count(), 1);
-    QCOMPARE(kHarness.chats().at(0)->providerId(), QStringLiteral("fake"));
-    QCOMPARE(kHarness.minted().size(), std::size_t{1});
+    QCOMPARE(dialog->property("visible").toBool(), true);
 }
 
 void TestQmlChat::test_sendButtonForwardsTypedTextToTheChat() {
     Harness harness;
-    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
-    // The cell's Repeater materialises the panel as soon as the model gains a
-    // row; one event-loop pass is enough for the composed controls to exist.
+    // The view materialises the panel from the row the harness opened up front;
+    // one event-loop pass is enough for the composed controls to exist.
     QCoreApplication::processEvents();
     QObject* input = harness.child(QStringLiteral("messageInput"));
     QObject* sendButton = harness.child(QStringLiteral("sendButton"));
@@ -267,7 +300,6 @@ void TestQmlChat::test_sendButtonForwardsTypedTextToTheChat() {
 
 void TestQmlChat::test_streamingTailShowsTheLiveReply() {
     Harness harness;
-    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
     Chat* chat = harness.chats().at(0);
     chat->send(QStringLiteral("hi"));
 
@@ -286,7 +318,6 @@ void TestQmlChat::test_streamingTailShowsTheLiveReply() {
 
 void TestQmlChat::test_messageDelegateRendersAssistantMarkdownAndUserPlainText() {
     Harness harness;
-    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
     QCoreApplication::processEvents();
     Chat* chat = harness.chats().at(0);
     chat->send(QStringLiteral("<b>hi</b>"));
@@ -319,7 +350,6 @@ void TestQmlChat::test_messageDelegateRendersAssistantMarkdownAndUserPlainText()
 
 void TestQmlChat::test_streamingTailRendersSanitisedMarkdown() {
     Harness harness;
-    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
     Chat* chat = harness.chats().at(0);
     chat->send(QStringLiteral("hi"));
     harness.minted().at(0)->lastAnswer()->appendChunk(QStringLiteral("**live** <script>bad</script>"));
@@ -340,7 +370,6 @@ void TestQmlChat::test_streamingTailRendersSanitisedMarkdown() {
 // answer: the footer binding is live, not a snapshot taken when the view loaded.
 void TestQmlChat::test_streamingTailFollowsEachAnswer() {
     Harness harness;
-    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
     QCoreApplication::processEvents();
 
     const auto kTailText = [&harness] {
@@ -376,16 +405,18 @@ void TestQmlChat::test_streamingTailFollowsEachAnswer() {
 // it belongs to while it streams.
 void TestQmlChat::test_streamingTailStaysInsideTheChatPanel() {
     Harness harness;
-    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
     QCoreApplication::processEvents();
     auto* window = qobject_cast<QQuickWindow*>(harness.root());
     QVERIFY(window != nullptr);
 
     Chat* chat = harness.chats().at(0);
     chat->send(QStringLiteral("hi"));
-    // Far taller than one panel: without containment this overflowed the chat.
+    // Far taller than the (now window-high) panel: without containment this
+    // overflowed the chat. The assistant text is Markdown, where a single newline
+    // is not a line break, so the reply wraps by width too - enough text must be
+    // supplied for it to exceed the panel whichever way it wraps.
     QString longReply;
-    for (int line = 0; line < 200; ++line) {
+    for (int line = 0; line < 1000; ++line) {
         longReply += QStringLiteral("reasoning line %1\n").arg(line);
     }
     harness.minted().at(0)->lastAnswer()->appendChunk(longReply);
@@ -423,7 +454,6 @@ void TestQmlChat::test_streamingTailStaysInsideTheChatPanel() {
 
 void TestQmlChat::test_chatFailureShowsTheError() {
     Harness harness;
-    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
     QCoreApplication::processEvents();
     QObject* errorLabel = harness.child(QStringLiteral("chatError"));
     QVERIFY(errorLabel != nullptr);
@@ -448,10 +478,60 @@ void TestQmlChat::test_chatFailureShowsTheError() {
     QCOMPARE(errorLabel->property("text").toString(), QString());
 }
 
+void TestQmlChat::test_backgroundCaptureToggleStartsOff() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    QObject* toggle = harness.child(QStringLiteral("backgroundCaptureToggle"));
+    QVERIFY(toggle != nullptr);
+
+    // The switch lives inside the chat and mirrors the chat's flag; it starts off.
+    QCOMPARE(toggle->property("checked").toBool(), false);
+    QCOMPARE(harness.chats().at(0)->isBackgroundCaptureEnabled(), false);
+}
+
+void TestQmlChat::test_backgroundCaptureToggleUpdatesTheChat() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    QObject* toggle = harness.child(QStringLiteral("backgroundCaptureToggle"));
+    QVERIFY(toggle != nullptr);
+
+    // The toggle forwards its state to the chat; the flag itself is inert (a
+    // stub), but the binding must hold so the future capture logic reads it.
+    QVERIFY(QMetaObject::invokeMethod(toggle, "toggle"));
+
+    QCOMPARE(harness.chats().at(0)->isBackgroundCaptureEnabled(), true);
+    QCOMPARE(toggle->property("checked").toBool(), true);
+}
+
+void TestQmlChat::test_providerSelectionRebuildsTheChat() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    QVERIFY(openSettingsDialog(harness) != nullptr);
+    QObject* picker = harness.child(QStringLiteral("providerPicker"));
+    QVERIFY(picker != nullptr);
+
+    const QPointer<Chat> kBefore(harness.chats().at(0));
+    const std::size_t kMintedBefore = harness.minted().size();
+
+    // Selecting a provider applies it: the single chat is rebuilt from a freshly
+    // minted provider and the previous chat is dropped.
+    QVERIFY(QMetaObject::invokeMethod(picker, "activated", Q_ARG(int, 0)));
+    QCoreApplication::processEvents();
+
+    // The previous chat is destroyed and a new one (with a newly minted provider)
+    // takes its place. QPointer survives allocator address reuse, unlike a raw
+    // pointer comparison.
+    QVERIFY(kBefore.isNull());
+    QCOMPARE(harness.chats().count(), 1);
+    QVERIFY(harness.chats().at(0) != nullptr);
+    QCOMPARE(harness.minted().size(), kMintedBefore + 1);
+}
+
 void TestQmlChat::test_providerSettingsFieldsAreBound() {
     Harness harness;
     QVERIFY(harness.settings().save(QStringLiteral("https://bound.test/v1"), QStringLiteral("bound-model"), QString()));
     QCoreApplication::processEvents();
+    QVERIFY(openSettingsDialog(harness) != nullptr);
 
     QObject* baseUrlField = harness.child(QStringLiteral("providerBaseUrlField"));
     QObject* modelField = harness.child(QStringLiteral("providerModelField"));
@@ -471,6 +551,7 @@ void TestQmlChat::test_apiKeyFieldIsMasked() {
     QVERIFY(harness.settings().save(
             QStringLiteral("https://mask.test/v1"), QStringLiteral("mask-model"), QStringLiteral("secret-key")));
     QCoreApplication::processEvents();
+    QVERIFY(openSettingsDialog(harness) != nullptr);
 
     QObject* apiKeyField = harness.child(QStringLiteral("providerApiKeyField"));
     QVERIFY(apiKeyField != nullptr);
@@ -492,6 +573,7 @@ void TestQmlChat::test_apiKeyFieldIsMasked() {
 void TestQmlChat::test_saveButtonPersistsProviderSettings() {
     Harness harness;
     QCoreApplication::processEvents();
+    QVERIFY(openSettingsDialog(harness) != nullptr);
 
     QObject* baseUrlField = harness.child(QStringLiteral("providerBaseUrlField"));
     QObject* modelField = harness.child(QStringLiteral("providerModelField"));
@@ -525,6 +607,32 @@ void TestQmlChat::test_saveButtonPersistsProviderSettings() {
     QVERIFY(kText.contains(QStringLiteral("POLZA_MODEL=panel-model")));
     QVERIFY(!kText.contains(QStringLiteral("panel-secret")));
     QVERIFY(!kText.contains(QStringLiteral("POLZA_API_KEY")));
+}
+
+void TestQmlChat::test_saveButtonRebuildsTheChat() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    QVERIFY(openSettingsDialog(harness) != nullptr);
+
+    QObject* baseUrlField = harness.child(QStringLiteral("providerBaseUrlField"));
+    QObject* modelField = harness.child(QStringLiteral("providerModelField"));
+    QObject* saveButton = harness.child(QStringLiteral("saveProviderSettingsButton"));
+    QVERIFY(baseUrlField != nullptr);
+    QVERIFY(modelField != nullptr);
+    QVERIFY(saveButton != nullptr);
+
+    const QPointer<Chat> kBefore(harness.chats().at(0));
+    QVERIFY(baseUrlField->setProperty("text", QStringLiteral("https://rebuild.test/v1")));
+    QVERIFY(modelField->setProperty("text", QStringLiteral("rebuild-model")));
+    QVERIFY(QMetaObject::invokeMethod(saveButton, "clicked"));
+    QCoreApplication::processEvents();
+
+    // The saved endpoint/model reaches the open chat at once: it is rebuilt with a
+    // freshly minted provider (the previous chat is dropped).
+    QCOMPARE(harness.settings().baseUrl(), QStringLiteral("https://rebuild.test/v1"));
+    QVERIFY(kBefore.isNull());
+    QCOMPARE(harness.chats().count(), 1);
+    QVERIFY(harness.chats().at(0) != nullptr);
 }
 
 QTEST_MAIN(TestQmlChat)

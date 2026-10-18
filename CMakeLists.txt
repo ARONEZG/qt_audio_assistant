@@ -378,9 +378,9 @@ set(_audio_assistant_qml_files
     qml/Composer.qml
     qml/ConversationView.qml
     qml/ChatPanel.qml
-    qml/ProviderSelector.qml
+    qml/ChatView.qml
     qml/ProviderSettingsPanel.qml
-    qml/ChatGrid.qml
+    qml/SettingsDialog.qml
 )
 
 foreach(_qml_file IN LISTS _audio_assistant_qml_files)

@@ -130,6 +130,18 @@ bool Chat::hasError() const noexcept {
     return hasError_;
 }
 
+bool Chat::isBackgroundCaptureEnabled() const noexcept {
+    return backgroundCaptureEnabled_;
+}
+
+void Chat::setBackgroundCaptureEnabled(bool enabled) {
+    if (backgroundCaptureEnabled_ == enabled) {
+        return;
+    }
+    backgroundCaptureEnabled_ = enabled;
+    emit backgroundCaptureChanged();
+}
+
 QString Chat::providerId() const {
     return provider_->id();
 }

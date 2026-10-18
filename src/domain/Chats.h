@@ -12,22 +12,26 @@
 #include "domain/Chat.h"
 #include "domain/Provider.h"
 
-// The grid of independent chats. It is a data object: it owns the chats it was
+// The collection of open chats. It is a data object: it owns the chats it was
 // given and exposes them row by row, but it never talks to a provider's network,
 // never decides when a chat sends, and holds no static state. A view binds to it
-// and calls add()/remove().
+// and calls add()/remove()/clear().
 //
-// Ownership: the grid owns the chats through std::unique_ptr; at() and add()
-// return observing pointers. A chat is created with the provider it was handed,
-// so the caller mints one instance per chat (Providers::fresh(id)) and the chats
-// never share a provider.
+// The application opens a single chat; the collection type still models several
+// so the single-chat UI can be widened later without a new model.
+//
+// Ownership: the collection owns the chats through std::unique_ptr; at() and
+// add() return observing pointers. A chat is created with the provider it was
+// handed, so the caller mints one instance per chat (Providers::fresh(id)) and
+// the chats never share a provider.
 class Chats : public QAbstractListModel {
     Q_OBJECT
     Q_DISABLE_COPY_MOVE(Chats)
-    // The grid is composed in main() and injected into the view; a view must
-    // never mint its own grid, so the type is visible to QML but uncreatable.
+    // The collection is composed in main() and injected into the view; a view
+    // must never mint its own chats, so the type is visible to QML but
+    // uncreatable.
     QML_ELEMENT
-    QML_UNCREATABLE("The composition root owns the grid")
+    QML_UNCREATABLE("The composition root owns the chats")
 
     Q_PROPERTY(int count READ count NOTIFY countChanged)
 
@@ -61,6 +65,11 @@ public:
     // Removes and destroys the chat at index. Returns false when the index is
     // out of range - removing nothing is a no-op, not an error.
     bool remove(int index);
+    // Removes and destroys every chat. Used when the provider of the single open
+    // chat is switched: the previous chat (and its history) is dropped as a
+    // whole rather than left behind invisibly. Clearing an already empty
+    // collection is a no-op that emits nothing.
+    Q_INVOKABLE void clear();
 
 signals:
     void countChanged();

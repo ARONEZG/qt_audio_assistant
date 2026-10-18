@@ -3,11 +3,12 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import AudioAssistant
 
-// One cell of the chat grid: a header with the provider name, the transcript and
-// the composer, all bound to a single Chat.
-// Public API: `chat`, injected by the grid from the model's role. All the cell
-// does is bind the chat's state and forward the user's intentions (send,
-// cancel) to it - it holds no state of its own.
+// The panel of the single open chat: a header with the provider name, the
+// background-audio switch and the stream controls, then the transcript and the
+// composer, all bound to a single Chat.
+// Public API: `chat`, injected by the view from the model's role. All the panel
+// does is bind the chat's state and forward the user's intentions (send, cancel,
+// toggle capture) to it - it holds no state of its own.
 Rectangle {
     id: root
 
@@ -37,6 +38,17 @@ Rectangle {
                 elide: Text.ElideRight
                 Accessible.role: Accessible.Heading
                 Accessible.name: root.chat.providerName
+            }
+
+            // Placeholder switch for background audio capture. It only mirrors
+            // the chat's flag; the flag itself is inert until the capture
+            // pipeline is wired in, so toggling it currently captures nothing.
+            CheckBox {
+                objectName: "backgroundCaptureToggle"
+                text: qsTr("Background audio capture")
+                checked: root.chat.backgroundCaptureEnabled
+                onCheckedChanged: root.chat.backgroundCaptureEnabled = checked
+                Accessible.name: qsTr("Background audio capture")
             }
 
             BusyIndicator {

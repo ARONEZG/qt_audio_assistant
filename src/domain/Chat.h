@@ -17,8 +17,8 @@
 #include "domain/Message.h"
 #include "domain/Provider.h"
 
-// One chat cell of the grid. It owns its provider (dependency injected through
-// the constructor) and keeps an append-only history of finished messages. The
+// One chat. It owns its provider (dependency injected through the constructor)
+// and keeps an append-only history of finished messages. The
 // in-flight answer never touches the history: it lives in streamingText() until
 // the provider completes it, at which point it is frozen into a Message.
 //
@@ -63,6 +63,13 @@ class Chat : public QAbstractListModel {
     // a failure, so a cancelled answer never sets it.
     Q_PROPERTY(QString errorText READ errorText NOTIFY errorTextChanged)
     Q_PROPERTY(bool hasError READ hasError NOTIFY errorTextChanged)
+    // Background-audio capture switch, toggled from the chat header. This is a
+    // stub: nothing consumes the flag yet. It is a chat property (not view
+    // state) because the intended wiring is for the chat to drive a capture
+    // source feeding a ring buffer and to drain that buffer on demand; keeping
+    // the switch here means the future logic already reads the right owner.
+    Q_PROPERTY(bool backgroundCaptureEnabled READ isBackgroundCaptureEnabled WRITE setBackgroundCaptureEnabled NOTIFY
+                       backgroundCaptureChanged)
 
 public:
     // The message roles a delegate binds to. Qt roles are plain ints by design,
@@ -103,6 +110,8 @@ public:
     [[nodiscard]] bool isStreaming() const noexcept;
     [[nodiscard]] QString errorText() const;
     [[nodiscard]] bool hasError() const noexcept;
+    [[nodiscard]] bool isBackgroundCaptureEnabled() const noexcept;
+    void setBackgroundCaptureEnabled(bool enabled);
     [[nodiscard]] QString providerId() const;
     [[nodiscard]] QString providerName() const;
 
@@ -123,6 +132,8 @@ signals:
     void streamingMarkupChanged();
     void stateChanged();
     void errorTextChanged();
+    // Emitted only when the background-capture switch actually changes value.
+    void backgroundCaptureChanged();
     void replyReceived(const Message& message);
     // Typed failure so the presentation layer can branch (retry on Network,
     // prompt on Authentication, ...).
@@ -196,5 +207,7 @@ private:
     QString errorText_;
     bool hasError_ = false;
     bool isStreaming_ = false;
+    // Stub state for the future background-audio feature (see the property).
+    bool backgroundCaptureEnabled_ = false;
     Answer* currentAnswer_ = nullptr;
 };

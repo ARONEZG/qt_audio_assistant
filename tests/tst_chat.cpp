@@ -50,6 +50,8 @@ public:
 private slots:
     void test_exposesProviderIdentity();
     void test_initialState();
+    void test_backgroundCaptureDefaultsOff();
+    void test_setBackgroundCaptureEmitsOnlyOnChange();
     void test_sendAppendsUserMessageAndStartsStreaming();
     void test_chunksAccumulateIntoStreamingText();
     void test_completeAppendsReplyAndResetsStreaming();
@@ -106,6 +108,33 @@ void TestChat::test_initialState() {
     QCOMPARE(kChat.isStreaming(), false);
     QCOMPARE(kChat.errorText(), QString());
     QCOMPARE(kChat.hasError(), false);
+}
+
+// The background-capture switch is a stub, but its default and its change
+// contract are part of the surface the chat exposes to the view.
+void TestChat::test_backgroundCaptureDefaultsOff() {
+    auto provider = std::make_unique<FakeProvider>();
+    const Chat kChat(std::move(provider));
+
+    QCOMPARE(kChat.isBackgroundCaptureEnabled(), false);
+}
+
+void TestChat::test_setBackgroundCaptureEmitsOnlyOnChange() {
+    auto provider = std::make_unique<FakeProvider>();
+    Chat chat(std::move(provider));
+    const QSignalSpy kCaptureSpy(&chat, &Chat::backgroundCaptureChanged);
+
+    chat.setBackgroundCaptureEnabled(true);
+    QCOMPARE(chat.isBackgroundCaptureEnabled(), true);
+    QCOMPARE(kCaptureSpy.count(), 1);
+
+    // Setting the value it already has is a no-op: no spurious notification.
+    chat.setBackgroundCaptureEnabled(true);
+    QCOMPARE(kCaptureSpy.count(), 1);
+
+    chat.setBackgroundCaptureEnabled(false);
+    QCOMPARE(chat.isBackgroundCaptureEnabled(), false);
+    QCOMPARE(kCaptureSpy.count(), 2);
 }
 
 void TestChat::test_sendAppendsUserMessageAndStartsStreaming() {

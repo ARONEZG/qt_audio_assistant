@@ -3,10 +3,14 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import AudioAssistant
 
-// The application window. Its three typed properties are the composition root's
-// dependencies, injected by main() before the component is loaded: the chat
-// grid, the offered providers and the thin invokable that turns the "add chat"
-// intent into chats.add(providers.fresh(id)). The view only binds them together.
+// The application window. Its four typed properties are the composition root's
+// dependencies, injected by main() before the component is loaded: the open
+// chats, the offered providers, the thin invokable that opens a chat for a
+// provider and the provider settings. The view only binds them together.
+//
+// The layout is deliberately a single chat with a top bar: the title on the
+// left and the settings gear on the right, outside the chat. Configuration
+// lives in the settings dialog, never inside the conversation.
 ApplicationWindow {
     id: window
 
@@ -27,25 +31,51 @@ ApplicationWindow {
         anchors.fill: parent
         spacing: 0
 
-        ProviderSelector {
+        // Top bar: the app name and, on the far right, the settings gear. The
+        // gear sits outside the chat so configuration is a separate concern.
+        RowLayout {
             Layout.fillWidth: true
             Layout.margins: Theme.spacingMedium
-            providers: window.providers
-            onChatRequested: providerId => window.newChat.open(providerId)
+            spacing: Theme.spacingMedium
+
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Audio Assistant")
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeTitle
+                elide: Text.ElideRight
+                Accessible.role: Accessible.Heading
+                Accessible.name: qsTr("Audio Assistant")
+            }
+
+            ToolButton {
+                objectName: "settingsButton"
+                text: "\u2699"
+                Accessible.name: qsTr("Settings")
+                onClicked: settingsDialog.open()
+            }
         }
 
-        ProviderSettingsPanel {
-            Layout.fillWidth: true
-            Layout.leftMargin: Theme.spacingMedium
-            Layout.rightMargin: Theme.spacingMedium
-            settings: window.providerSettings
-        }
-
-        ChatGrid {
+        ChatView {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.margins: Theme.spacingMedium
             chats: window.chats
+        }
+    }
+
+    SettingsDialog {
+        id: settingsDialog
+
+        providers: window.providers
+        settings: window.providerSettings
+
+        // Switching the provider or saving the endpoint/model/key rebuilds the
+        // single open chat, so the new configuration takes effect immediately.
+        // The previous chat (and its history) is dropped as a whole.
+        onProviderApplied: providerId => {
+            window.chats.clear();
+            window.newChat.open(providerId);
         }
     }
 }

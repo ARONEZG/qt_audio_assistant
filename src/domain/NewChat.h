@@ -9,7 +9,7 @@ class Chats;
 class Providers;
 class Chat;
 
-// The single composition seam between the provider list and the chat grid.
+// The single composition seam between the provider list and the chats.
 //
 // The view expresses one intent - "open a chat with the selected provider" - and
 // neither half can be done from QML on its own: Chats::add() takes a
@@ -21,8 +21,8 @@ class Chat;
 //
 // It is not a controller: it owns nothing, holds no state and has no decision to
 // make beyond delegating to the two data objects. The composition root (main())
-// decides *which* grid and *which* provider list it works on by constructing it;
-// the object merely lets the QML intent reach that decision.
+// decides *which* chats and *which* provider list it works on by constructing
+// it; the object merely lets the QML intent reach that decision.
 class NewChat : public QObject {
     Q_OBJECT
     Q_DISABLE_COPY_MOVE(NewChat)
@@ -33,9 +33,9 @@ public:
     NewChat(Chats& chats, const Providers& providers, QObject* parent = nullptr);
     ~NewChat() override;
 
-    // Appends a chat for the given provider id and returns it (the grid keeps
-    // owning it), or nullptr when the id is not offered - the same "no provider"
-    // outcome Providers::fresh() and Chats::add() already document.
+    // Appends a chat for the given provider id and returns it (the collection
+    // keeps owning it), or nullptr when the id is not offered - the same "no
+    // provider" outcome Providers::fresh() and Chats::add() already document.
     Q_INVOKABLE Chat* open(const QString& providerId);
 
 private:

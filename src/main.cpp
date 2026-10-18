@@ -88,6 +88,14 @@ int main(int argc, char* argv[]) {
     Providers providers(providerOffers(settings));
     NewChat newChat(chats, providers);
 
+    // The application opens a single chat up front with the first offered
+    // provider. The settings dialog can switch the provider (rebuilding this
+    // chat) or change the endpoint/model/key, which the rebuild picks up because
+    // the provider recipe reads the live settings.
+    if (providers.count() > 0) {
+        (void)newChat.open(providers.idAt(0));
+    }
+
     QQmlApplicationEngine engine;
     engine.setInitialProperties({
             {QStringLiteral("chats"), QVariant::fromValue(&chats)},
