@@ -211,13 +211,18 @@ void Chat::stopStreaming() {
         disconnect(currentAnswer_, nullptr, this, nullptr);
         currentAnswer_ = nullptr;
     }
+    finishStreaming();
+}
+
+void Chat::finishStreaming() {
     // Terminal flush: an update still pending is published now rather than on
     // the next throttle tick, so no markup update is deferred past the end of the
     // stream. streamingText_ is kept as the sanitisation source: the lazy
     // getter then exposes exactly SafeMarkdown(full text), byte-identical to the
     // finished message that replaces the tail.
     markupThrottle_.stop();
-    if (isStreaming_ && streamingMarkupDirty_) {
+    if (isStreaming_ && markupPublishPending_) {
+        markupPublishPending_ = false;
         emit streamingMarkupChanged();
     }
     // streamingText() hides the retained raw text once the stream is over; signal
@@ -231,6 +236,7 @@ void Chat::stopStreaming() {
 
 void Chat::setStreamingMarkup(const QString& markup) {
     streamingMarkupDirty_ = false;
+    markupPublishPending_ = false;
     if (streamingMarkupCache_ == markup) {
         return;
     }
@@ -239,7 +245,7 @@ void Chat::setStreamingMarkup(const QString& markup) {
 }
 
 void Chat::scheduleMarkupPublish() {
-    if (streamingMarkupDirty_ && !streamingText_.isEmpty() && !markupThrottle_.isActive()) {
+    if (markupPublishPending_ && !streamingText_.isEmpty() && !markupThrottle_.isActive()) {
         markupThrottle_.start();
     }
 }
@@ -249,9 +255,10 @@ void Chat::publishStreamingMarkup() {
     // sanitisation stays lazy in streamingMarkup(). Keeping it out of the timer
     // also means a headless Chat that never reads markup never needs a
     // QGuiApplication (SafeMarkdown uses QTextDocument).
-    if (!streamingMarkupDirty_) {
+    if (!markupPublishPending_) {
         return;
     }
+    markupPublishPending_ = false;
     emit streamingMarkupChanged();
 }
 
@@ -289,6 +296,7 @@ void Chat::onChunkReceived(const QString& chunk) {
     // is only advertised to QML at the throttled cadence.
     emit streamingTextChanged();
     streamingMarkupDirty_ = true;
+    markupPublishPending_ = true;
     scheduleMarkupPublish();
 }
 
@@ -314,7 +322,8 @@ void Chat::onAnswerCancelled() {
 void Chat::onAnswerDestroyed() {
     // The provider destroyed its Answer without a terminal signal. The bare
     // observing pointer is cleared here, synchronously with destruction, so it
-    // can never dangle; the shared reset then flushes and clears the tail.
+    // can never dangle; finishStreaming() then flushes and clears the tail
+    // without re-running the disconnect guard.
     currentAnswer_ = nullptr;
-    stopStreaming();
+    finishStreaming();
 }
