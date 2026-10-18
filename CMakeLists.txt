@@ -285,14 +285,18 @@ set_target_properties(miniaudio::miniaudio PROPERTIES
 #     AudioSink port; they depend only on the STL, so a consumer or a test can
 #     use them without pulling Qt or any platform code in;
 #   * the miniaudio implementation translation unit, so the third-party
-#     amalgamation is compiled once and the future platform-specific capture
-#     code has a single home behind a narrow interface.
-# The concrete capture logic (miniaudio-backed AudioSource) is added later.
+#     amalgamation is compiled once and the platform-specific capture code has
+#     a single home behind a narrow interface;
+#   * the concrete MiniaudioCaptureSource: the microphone AudioSource that
+#     resamples the device stream to the canonical format and forwards it into
+#     an injected AudioSink. miniaudio.h stays confined to its .cpp (pimpl), so
+#     the public audio headers remain free of third-party includes.
 add_library(audio-assistant-audio STATIC
     src/audio/AudioBuffer.cpp
     src/audio/AudioFormat.cpp
     src/audio/AudioSink.cpp
     src/audio/AudioSource.cpp
+    src/audio/MiniaudioCaptureSource.cpp
     src/audio/MiniaudioImplementation.cpp
 )
 
@@ -641,6 +645,32 @@ target_link_libraries(tst_audiobuffer PRIVATE
 
 add_test(NAME tst_audiobuffer COMMAND tst_audiobuffer)
 set_tests_properties(tst_audiobuffer PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── Miniaudio capture source test ───────────────────────────
+# Covers the concrete AudioSource: canonical format, exact frame forwarding into
+# the injected sink, idempotent start()/stop()/destructor lifecycle and the
+# start() failure report. It links miniaudio explicitly so the test can build a
+# null-backend context; no real device is opened.
+qt_add_executable(tst_miniaudiocapturesource
+    tests/tst_miniaudiocapturesource.cpp
+)
+
+set_target_properties(tst_miniaudiocapturesource PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_miniaudiocapturesource PRIVATE
+    audio-assistant-strict
+    audio-assistant-audio
+    miniaudio::miniaudio
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_miniaudiocapturesource COMMAND tst_miniaudiocapturesource)
+set_tests_properties(tst_miniaudiocapturesource PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
