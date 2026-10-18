@@ -6,19 +6,40 @@
 
 namespace {
 
-// Case-insensitive header lookup over a raw request head. Returns the numeric
-// value of the header, or -1 when it is absent.
-qsizetype headerValue(const QByteArray& head, const QByteArray& name) {
+// Case-insensitive header value lookup over a raw request head. Returns the
+// trimmed value, or an empty array when the header is absent.
+QByteArray headerText(const QByteArray& head, const QByteArray& name) {
     const QByteArray kLower = head.toLower();
     const QByteArray kKey = name.toLower() + ":";
     const qsizetype kIndex = kLower.indexOf(kKey);
     if (kIndex < 0) {
-        return -1;
+        return {};
     }
     const qsizetype kStart = kIndex + kKey.size();
     const qsizetype kEnd = head.indexOf("\r\n", kStart);
     const qsizetype kStop = kEnd < 0 ? head.size() : kEnd;
-    return static_cast<qsizetype>(head.mid(kStart, kStop - kStart).trimmed().toLongLong());
+    return head.mid(kStart, kStop - kStart).trimmed();
+}
+
+// Case-insensitive header lookup over a raw request head. Returns the numeric
+// value of the header, or -1 when it is absent.
+qsizetype headerValue(const QByteArray& head, const QByteArray& name) {
+    const QByteArray kValue = headerText(head, name);
+    return kValue.isEmpty() ? -1 : static_cast<qsizetype>(kValue.toLongLong());
+}
+
+// The request target (second token of the request line), e.g.
+// "/v1/audio/transcriptions".
+QByteArray requestTarget(const QByteArray& head) {
+    const qsizetype kLineEnd = head.indexOf("\r\n");
+    const QByteArray kRequestLine = kLineEnd < 0 ? head : head.left(kLineEnd);
+    const qsizetype kFirstSpace = kRequestLine.indexOf(' ');
+    if (kFirstSpace < 0) {
+        return {};
+    }
+    const qsizetype kSecondSpace = kRequestLine.indexOf(' ', kFirstSpace + 1);
+    const qsizetype kEnd = kSecondSpace < 0 ? kRequestLine.size() : kSecondSpace;
+    return kRequestLine.mid(kFirstSpace + 1, kEnd - kFirstSpace - 1);
 }
 
 }  // namespace
@@ -58,6 +79,14 @@ QByteArray OpenAiMockServer::lastRequestBody() const {
     return lastRequestBody_;
 }
 
+QByteArray OpenAiMockServer::lastRequestTarget() const {
+    return requestTarget(lastRequestHead_);
+}
+
+QByteArray OpenAiMockServer::lastRequestHeader(const QByteArray& name) const {
+    return headerText(lastRequestHead_, name);
+}
+
 void OpenAiMockServer::onNewConnection() {
     while (QTcpSocket* socket = server_.nextPendingConnection()) {
         connections_.emplace(socket, Connection{});
@@ -81,7 +110,8 @@ void OpenAiMockServer::onReadyRead(QTcpSocket* socket) {
         }
         connection.headersParsed = true;
         connection.bodyOffset = kHeaderEnd + 4;
-        const qsizetype kLength = headerValue(connection.buffer.left(kHeaderEnd), "Content-Length");
+        connection.head = connection.buffer.left(kHeaderEnd);
+        const qsizetype kLength = headerValue(connection.head, "Content-Length");
         connection.contentLength = kLength < 0 ? 0 : kLength;
     }
 
@@ -90,6 +120,7 @@ void OpenAiMockServer::onReadyRead(QTcpSocket* socket) {
     }
     connection.handled = true;
     ++requestCount_;
+    lastRequestHead_ = connection.head;
     lastRequestBody_ = connection.buffer.mid(connection.bodyOffset, connection.contentLength);
     if (handler_) {
         handler_(*socket, lastRequestBody_);
