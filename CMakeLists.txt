@@ -375,6 +375,7 @@ qt_add_qml_module(audio-assistant-domain
 
 # ── Main executable ─────────────────────────────────────────
 add_executable(audio-assistant
+    src/app/OpenAiCompatibleProvider.cpp
     src/app/PlaceholderProvider.cpp
     src/main.cpp
     src/logging/LogBridge.cpp
@@ -461,6 +462,38 @@ audio_assistant_add_domain_test(tst_newchat
 audio_assistant_add_domain_test(tst_placeholderprovider
     tests/tst_placeholderprovider.cpp
     src/app/PlaceholderProvider.cpp
+)
+
+# ── Network provider test ───────────────────────────────────
+# Exercises the OpenAI-compatible adapter through a local mock HTTP server
+# (tests/OpenAiMockServer) instead of the real network: streaming SSE, HTTP
+# errors, malformed frames, an interrupted stream, cancellation and timeout.
+# It links LLMQore (the client the adapter wraps) and therefore Qt Network.
+qt_add_executable(tst_openai_provider
+    tests/tst_openai_provider.cpp
+    tests/OpenAiMockServer.cpp
+    tests/OpenAiMockServer.h
+    src/app/OpenAiCompatibleProvider.cpp
+)
+
+set_target_properties(tst_openai_provider PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_openai_provider PRIVATE
+    audio-assistant-strict
+    audio-assistant-qt-warnings
+    audio-assistant-domain
+    Qt6::Core
+    Qt6::Network
+    Qt6::Concurrent
+    Qt6::Test
+    LLMQore::LLMQore
+)
+
+add_test(NAME tst_openai_provider COMMAND tst_openai_provider)
+set_tests_properties(tst_openai_provider PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
 # ── Audio smoke test ────────────────────────────────────────
