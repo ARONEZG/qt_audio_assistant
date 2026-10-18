@@ -8,6 +8,7 @@
 #include <QtTest>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -67,6 +68,7 @@ private slots:
     void test_mapsFullScaleSamples();
     void test_mapsZeroAndHalfScale();
     void test_clampsBeyondFullScale();
+    void test_nonFiniteSamplesBecomeSilence();
     void test_writesLittleEndianSamples();
 };
 
@@ -135,6 +137,19 @@ void TestWavEncoder::test_clampsBeyondFullScale() {
 
     QCOMPARE(sampleAt(kWav, 0U), static_cast<std::int16_t>(32767));
     QCOMPARE(sampleAt(kWav, 1U), static_cast<std::int16_t>(-32768));
+}
+
+void TestWavEncoder::test_nonFiniteSamplesBecomeSilence() {
+    // NaN/inf are corrupt input: they must not become a full-scale sample
+    // (std::clamp(NaN) stays NaN and lround(NaN) is implementation-defined).
+    const std::vector<float> kSamples{std::numeric_limits<float>::quiet_NaN(),
+                                      std::numeric_limits<float>::infinity(),
+                                      -std::numeric_limits<float>::infinity()};
+    const std::vector<std::uint8_t> kWav = audio::encodeWavPcm16(canonicalFormat(), kSamples);
+
+    QCOMPARE(sampleAt(kWav, 0U), static_cast<std::int16_t>(0));
+    QCOMPARE(sampleAt(kWav, 1U), static_cast<std::int16_t>(0));
+    QCOMPARE(sampleAt(kWav, 2U), static_cast<std::int16_t>(0));
 }
 
 void TestWavEncoder::test_writesLittleEndianSamples() {

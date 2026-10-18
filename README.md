@@ -21,10 +21,16 @@
   (`miniaudio/0.11.25` в `conanfile.py`; лицензия Unlicense/MIT-0). Header-only,
   без транзитивных зависимостей. Версия — единственный источник правды; решение
   и матрица покрытия — `docs/ADR-audio-capture.md`.
-- **Conan** 2.x — обязателен: через него подтягиваются `spdlog`, **miniaudio**
-  и **LLMQore v0.8.0** (MIT). LLMQore нет в ConanCenter, поэтому он собирается из
-  in-repo рецепта `recipes/llmqore`, который скачивает исходники с `github.com`
-  (доступ к сети нужен на этапе `conan install`, а не конфигурации CMake).
+- **SQLite** 3.54.0 — встраиваемая БД для локального хранения, управляется через
+  Conan (`sqlite3/3.54.0` в `conanfile.py`, публичное достояние / Unlicense);
+  CMake-цель `SQLite::SQLite3`. Без транзитивных зависимостей. Слой хранения пока
+  не реализован — подключены сама зависимость и smoke-тест; решение —
+  `docs/ADR-persistence.md`.
+- **Conan** 2.x — обязателен: через него подтягиваются `spdlog`, **miniaudio**,
+  **sqlite3** и **LLMQore v0.8.0** (MIT). LLMQore нет в ConanCenter, поэтому он
+  собирается из in-repo рецепта `recipes/llmqore`, который скачивает исходники с
+  `github.com` (доступ к сети нужен на этапе `conan install`, а не конфигурации
+  CMake).
 
 ### Установка Qt 6.8.3 (aqtinstall, без sudo)
 
@@ -64,7 +70,8 @@ cmake --build build --parallel
 в `CMakeLists.txt` он не зашит.
 
 Проект требует Clang; конфигурация завершится ошибкой с другим компилятором.
-Все зависимости (`spdlog`, `miniaudio`, LLMQore) поставляются через Conan (см. ниже).
+Все зависимости (`spdlog`, `miniaudio`, `sqlite3`, LLMQore) поставляются через
+Conan (см. ниже).
 
 ## Захват аудио: зависимость и покрытие платформ
 
@@ -86,11 +93,20 @@ cmake --build build --parallel
   (`AudioHardwareCreateProcessTap`, macOS 14.2+); до его появления macOS loopback
   отсутствует и должен явно показываться как недоступная функция.
 
+## Локальное хранение (SQLite)
+
+Для будущего хранения чатов, сообщений и прочих персистентных данных подключён
+**SQLite** (ConanCenter, `sqlite3/3.54.0`, CMake-цель `SQLite::SQLite3`; лицензия
+public domain / Unlicense). Слой хранения **пока не реализован** — добавлены
+только зависимость и smoke-тест компиляции/линковки `tst_sqlite_smoke`, который
+работает с in-memory базой и не создаёт файлов. Решение и его обоснование —
+`docs/ADR-persistence.md`.
+
 ## Сборка с Conan (рекомендуемый способ)
 
-Conan 2.x управляет зависимостями: `spdlog/1.14.1` и `miniaudio/0.11.25` берутся
-из ConanCenter, `llmqore/0.8.0` собирается из in-repo рецепта `recipes/llmqore`
-(см. `conanfile.py`).
+Conan 2.x управляет зависимостями: `spdlog/1.14.1`, `miniaudio/0.11.25` и
+`sqlite3/3.54.0` берутся из ConanCenter, `llmqore/0.8.0` собирается из in-repo
+рецепта `recipes/llmqore` (см. `conanfile.py`).
 Qt ставится отдельно через `aqtinstall` и находится по `CMAKE_PREFIX_PATH`
 (зависимость Qt через ConanCenter пока отключена). Требуется `conan` 2.x в `PATH`.
 
@@ -195,6 +211,9 @@ ctest --preset audio-assistant-debug --output-on-failure
   `MINIAUDIO_IMPLEMENTATION` (библиотека `audio-assistant-audio`), заголовок
   включён как SYSTEM; API захвата не используется, добавлен только smoke-тест
   линковки (`tst_audio_smoke`).
+  `sqlite3/3.54.0` подключается через ConanCenter как статическая библиотека
+  (`SQLite::SQLite3`), заголовок включён как SYSTEM; слой хранения не
+  реализован, добавлен только smoke-тест линковки (`tst_sqlite_smoke`).
   Отдельной графической сессии
   во время проверки не было; GUI запускался только с `QT_QPA_PLATFORM=offscreen`.
   Сборка через Conan проверена только на Linux/Ninja; конфигурация с другими генераторами
@@ -209,6 +228,8 @@ ctest --preset audio-assistant-debug --output-on-failure
 - Захват микрофона и системного аудио (контракты `AudioSource`/`AudioSink` и
   зависимость `miniaudio` подключены, логика захвата не реализована)
 - Кольцевой аудиобуфер
+- Локальное хранение (SQLite подключён как зависимость, слой хранения, схема и
+  миграции не реализованы)
 - Транскрибация
 - Интеграция с LLM / сетевые запросы
 - Горячие клавиши

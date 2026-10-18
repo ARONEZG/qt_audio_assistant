@@ -61,15 +61,16 @@ QString httpErrorMessage(int status, const QByteArray& body) {
 
 }  // namespace
 
-OpenAiCompatibleTranscriber::OpenAiCompatibleTranscriber(QString baseUrl,
-                                                         QString apiKey,
-                                                         QString model,
-                                                         QObject* parent)
+OpenAiCompatibleTranscriber::OpenAiCompatibleTranscriber(
+        QString baseUrl, QString apiKey, QString model, int transferTimeoutMs, QObject* parent)
     : TranscriptionProvider(parent),
       baseUrl_(std::move(baseUrl)),
       apiKey_(std::move(apiKey)),
       model_(std::move(model)),
       network_(new QNetworkAccessManager(this)) {
+    if (transferTimeoutMs > 0) {
+        network_->setTransferTimeout(transferTimeoutMs);
+    }
 }
 
 OpenAiCompatibleTranscriber::~OpenAiCompatibleTranscriber() {
@@ -95,9 +96,12 @@ void OpenAiCompatibleTranscriber::transcribe(std::vector<float> samples) {
     }
 
     // A single request is in flight at a time; a newer call supersedes the
-    // previous one instead of racing it. The superseded caller is told
-    // explicitly rather than left without a terminal signal.
-    abortActive(ProviderError::kCancelled, QStringLiteral("Transcription superseded by a newer request"));
+    // previous one instead of racing it. The superseded caller is told from the
+    // event loop (scheduleFailure), so transcribe() still never emits a terminal
+    // signal synchronously - even when a failed() slot re-enters transcribe().
+    if (abortActive()) {
+        scheduleFailure(ProviderError::kCancelled, QStringLiteral("Transcription superseded by a newer request"));
+    }
 
     const std::vector<std::uint8_t> kWav = audio::encodeWavPcm16(canonicalFormat(), samples);
     const QByteArray kFile =
@@ -118,23 +122,26 @@ void OpenAiCompatibleTranscriber::transcribe(std::vector<float> samples) {
 }
 
 void OpenAiCompatibleTranscriber::cancel() {
-    abortActive(ProviderError::kCancelled, QStringLiteral("Transcription cancelled"));
+    // Synchronous, like Answer::cancel(): the caller asked for the abort now.
+    if (abortActive()) {
+        emit failed(ProviderError::kCancelled, QStringLiteral("Transcription cancelled"));
+    }
 }
 
 void OpenAiCompatibleTranscriber::scheduleFailure(ProviderError error, const QString& message) {
     QTimer::singleShot(0, this, [this, error, message] { emit failed(error, message); });
 }
 
-void OpenAiCompatibleTranscriber::abortActive(ProviderError error, const QString& message) {
+bool OpenAiCompatibleTranscriber::abortActive() {
     QNetworkReply* reply = reply_;
     if (reply == nullptr) {
-        return;
+        return false;
     }
     reply_ = nullptr;
     QObject::disconnect(reply, nullptr, this, nullptr);
     reply->abort();
     reply->deleteLater();
-    emit failed(error, message);
+    return true;
 }
 
 void OpenAiCompatibleTranscriber::onReplyFinished() {

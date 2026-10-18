@@ -47,6 +47,12 @@ void appendU32(std::vector<std::uint8_t>& out, std::uint32_t value) {
 // mapping. Rounding is half away from zero (std::lround), so the result is
 // deterministic and reproducible across platforms.
 std::int16_t toPcm16(float sample) {
+    // Non-finite input is corrupt, not loud: map NaN and +/-inf to silence so a
+    // glitch can never turn into a full-scale pop (std::lround(NaN) would
+    // otherwise produce an implementation-defined integer).
+    if (!std::isfinite(sample)) {
+        return 0;
+    }
     const float kClamped = std::clamp(sample, -1.0F, 1.0F);
     const float kScaled = kClamped >= 0.0F ? kClamped * 32767.0F : kClamped * 32768.0F;
     const long kRounded = std::lround(kScaled);
@@ -56,8 +62,10 @@ std::int16_t toPcm16(float sample) {
 }  // namespace
 
 std::vector<std::uint8_t> encodeWavPcm16(AudioFormat format, std::span<const float> samples) {
-    // Bytes of sample data: one frame is a single float sample index (the ring
-    // buffer already holds a non-interleaved canonical stream) times two bytes.
+    // Bytes of sample data: the span is interleaved PCM, so each element is one
+    // sample slot and becomes two bytes. For the canonical mono stream a slot is
+    // one frame; a multi-channel format still serialises correctly (blockAlign
+    // below reflects the channel count).
     const auto kDataBytes = static_cast<std::uint32_t>(samples.size() * sizeof(std::int16_t));
     const auto kBlockAlign = static_cast<std::uint16_t>(format.channels() * (kBitsPerSample / 8U));
     const auto kByteRate = format.sampleRate() * static_cast<std::uint32_t>(kBlockAlign);

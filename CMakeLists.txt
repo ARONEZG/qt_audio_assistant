@@ -89,9 +89,9 @@ if(DEFINED CONAN_BUILD_DIR)
     _audio_assistant_find_conan_toolchain("${_conan_dir}" _conan_toolchain)
 
     if(NOT _conan_toolchain)
-        # The managed dependencies (spdlog, miniaudio, llmqore) are not installed
-        # for this build type yet. Install them automatically so one-click IDE
-        # builds work.
+        # The managed dependencies (spdlog, miniaudio, llmqore, sqlite3) are not
+        # installed for this build type yet. Install them automatically so
+        # one-click IDE builds work.
         find_program(_conan_exe conan)
         if(NOT _conan_exe)
             message(FATAL_ERROR
@@ -278,6 +278,25 @@ set_target_properties(miniaudio::miniaudio PROPERTIES
     INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${miniaudio_INCLUDE_DIRS}"
 )
 
+# ── SQLite (persistence) ────────────────────────────────────
+# sqlite3 is a managed Conan dependency (sqlite3/3.54.0 in conanfile.py) — the
+# single source of truth for its version. It is the self-contained embedded SQL
+# engine (public domain / Unlicense) that the future persistence layer builds
+# on; the layer itself is not implemented yet, so today only the dependency and
+# its compile/link smoke test exist. See docs/ADR-persistence.md.
+# The minimum is pinned (like spdlog above) so configuring against a different
+# sqlite3 fails immediately instead of silently building with another version;
+# the exact version still comes from the Conan toolchain. Keep in sync with the
+# "sqlite3/3.54.0" requirement in conanfile.py.
+find_package(SQLite3 3.54 REQUIRED)
+
+# sqlite3.h is third-party code. As with miniaudio.h, repeat Conan's include
+# directory as a SYSTEM include directory so the -Weverything -Werror profile
+# does not report diagnostics inside the vendored header.
+set_target_properties(SQLite::SQLite3 PROPERTIES
+    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${SQLite3_INCLUDE_DIRS}"
+)
+
 # ── Audio library ───────────────────────────────────────────
 # The audio subsystem. It holds three things:
 #   * the framework-agnostic capture contracts (AudioFormat, AudioSource,
@@ -406,6 +425,7 @@ qt_add_qml_module(audio-assistant-domain
 
 # ── Main executable ─────────────────────────────────────────
 add_executable(audio-assistant
+    src/app/AudioCapture.cpp
     src/app/OpenAiCompatibleProvider.cpp
     src/app/OpenAiCompatibleTranscriber.cpp
     src/app/PlaceholderProvider.cpp
@@ -601,6 +621,34 @@ set_tests_properties(tst_audio_smoke PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
+# ── SQLite smoke test ───────────────────────────────────────
+# Proves the sqlite3 dependency configures, compiles and links (see the test file
+# header for the exact scope) without adding a persistence layer: it opens an
+# in-memory database, runs one statement and reads the value back. No file on
+# disk is created.
+qt_add_executable(tst_sqlite_smoke
+    tests/tst_sqlite_smoke.cpp
+)
+
+set_target_properties(tst_sqlite_smoke PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+# SQLite::SQLite3 is linked explicitly so the test's own <sqlite3.h> include is
+# resolved as SYSTEM and the library (plus the system libraries the Conan recipe
+# declares: pthread/dl/m on Linux) actually resolves at link time.
+target_link_libraries(tst_sqlite_smoke PRIVATE
+    audio-assistant-strict
+    SQLite::SQLite3
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_sqlite_smoke COMMAND tst_sqlite_smoke)
+set_tests_properties(tst_sqlite_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
 # ── Audio format test ───────────────────────────────────────
 # Covers the capture-layer value type: construction, invariants, boundaries and
 # comparison. The contracts are STL-only, so no miniaudio header is included
@@ -730,6 +778,39 @@ target_link_libraries(tst_transcriber PRIVATE
 
 add_test(NAME tst_transcriber COMMAND tst_transcriber)
 set_tests_properties(tst_transcriber PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── Audio capture facade test ───────────────────────────────
+# Covers the composition facade that ties a source, the ring buffer and a
+# transcriber together: command delegation, the snapshot hand-off into
+# transcribe() and the terminal-signal relay. Both wide interfaces are test
+# doubles, so no device, no network and no real timing are involved.
+#
+# audio-assistant-qt-warnings is linked for the same reason as the other Qt
+# targets: AudioCapture's moc-generated signal dispatcher indexes the signal
+# argument array directly (-Wno-unsafe-buffer-usage), and the fake carries Qt
+# value types (-Wno-padded).
+qt_add_executable(tst_audiocapture
+    tests/tst_audiocapture.cpp
+    src/app/AudioCapture.cpp
+)
+
+set_target_properties(tst_audiocapture PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_audiocapture PRIVATE
+    audio-assistant-strict
+    audio-assistant-qt-warnings
+    audio-assistant-audio
+    audio-assistant-domain
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_audiocapture COMMAND tst_audiocapture)
+set_tests_properties(tst_audiocapture PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 

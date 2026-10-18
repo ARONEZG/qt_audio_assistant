@@ -59,6 +59,7 @@ private slots:
     void test_httpStatusIsClassified_data();
     void test_httpStatusIsClassified();
     void test_transportFailureFails();
+    void test_transferTimeoutFails();
     void test_malformedJsonFails();
     void test_missingTextFieldFails();
     void test_nonObjectJsonFails();
@@ -149,6 +150,10 @@ void TestTranscriber::test_httpStatusIsClassified_data() {
     QTest::newRow("401 unauthorized") << 401 << ProviderError::kAuthentication;
     QTest::newRow("429 rate limit") << 429 << ProviderError::kRateLimit;
     QTest::newRow("400 bad request") << 400 << ProviderError::kInvalidResponse;
+    QTest::newRow("403 forbidden") << 403 << ProviderError::kAuthentication;
+    QTest::newRow("413 too large") << 413 << ProviderError::kInvalidResponse;
+    QTest::newRow("422 unprocessable") << 422 << ProviderError::kInvalidResponse;
+    QTest::newRow("500 server error") << 500 << ProviderError::kNetwork;
 }
 
 void TestTranscriber::test_httpStatusIsClassified() {
@@ -178,6 +183,22 @@ void TestTranscriber::test_transportFailureFails() {
         socket.disconnectFromHost();
     });
     OpenAiCompatibleTranscriber transcriber(server.baseUrl(), QStringLiteral("k"));
+
+    QSignalSpy kFailedSpy(&transcriber, &TranscriptionProvider::failed);
+    transcriber.transcribe({0.0F});
+    QVERIFY(kFailedSpy.wait(kReplyTimeout));
+
+    QCOMPARE(kFailedSpy.at(0).at(0).value<ProviderError>(), ProviderError::kNetwork);
+}
+
+void TestTranscriber::test_transferTimeoutFails() {
+    OpenAiMockServer server;
+    QVERIFY(server.listen());
+    server.setHandler([](QTcpSocket&, const QByteArray&) {
+        // Accept the request but never respond, forcing the transfer timeout.
+    });
+    OpenAiCompatibleTranscriber transcriber(
+            server.baseUrl(), QStringLiteral("k"), QStringLiteral("openai/whisper-1"), 300);
 
     QSignalSpy kFailedSpy(&transcriber, &TranscriptionProvider::failed);
     transcriber.transcribe({0.0F});
@@ -293,13 +314,17 @@ void TestTranscriber::test_newerRequestSupersedesTheActiveOne() {
     });
     OpenAiCompatibleTranscriber transcriber(server.baseUrl(), QStringLiteral("k"));
 
-    const QSignalSpy kFailedSpy(&transcriber, &TranscriptionProvider::failed);
+    QSignalSpy kFailedSpy(&transcriber, &TranscriptionProvider::failed);
     QSignalSpy kTranscribedSpy(&transcriber, &TranscriptionProvider::transcribed);
 
     transcriber.transcribe({0.0F});
     QVERIFY(QTest::qWaitFor([&] { return server.requestCount() == 1; }, kReplyTimeout));
     transcriber.transcribe({0.1F});
 
+    // The superseded failure is delivered from the event loop, never inside the
+    // new transcribe() call (the TranscriptionProvider contract).
+    QCOMPARE(kFailedSpy.count(), 0);
+    QVERIFY(kFailedSpy.wait(kReplyTimeout));
     QCOMPARE(kFailedSpy.count(), 1);
     QCOMPARE(kFailedSpy.at(0).at(0).value<ProviderError>(), ProviderError::kCancelled);
     QVERIFY(kTranscribedSpy.wait(kReplyTimeout));
