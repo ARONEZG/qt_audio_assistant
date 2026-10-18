@@ -9,6 +9,7 @@
 
 class QNetworkAccessManager;
 class QNetworkReply;
+class QByteArray;
 
 // Concrete transcription provider for an OpenAI-compatible speech-to-text
 // endpoint (the MVP's "Polza AI" is one such endpoint; the URL, model and key
@@ -57,6 +58,15 @@ public:
 
     void transcribe(std::vector<float> samples) override;
 
+    // Updates the endpoint and key used by subsequent requests. Unlike the chat
+    // provider (rebuilt from live settings on each mint), this adapter is built
+    // once at startup; the composition root calls this when the user saves
+    // provider settings, so a key entered in the settings panel - a session
+    // secret that is never persisted - reaches transcription. The model stays
+    // fixed: it is the speech-to-text model (POLZA_STT_MODEL), a separate
+    // concern from the chat model held in the provider settings.
+    void setConfiguration(QString baseUrl, QString apiKey);
+
     // Aborts the in-flight request (if any) and reports it as
     // failed(ProviderError::kCancelled). Synchronous, like Answer::cancel(); a
     // call with no request in flight is a no-op. It is optional: a consumer
@@ -74,6 +84,10 @@ private:
     // failure so it still never emits inside its own call.
     [[nodiscard]] bool abortActive();
     void onReplyFinished();
+    // Parses a 2xx response body and emits exactly one terminal signal
+    // (transcribed, or failed for a malformed/missing-text body). Kept separate
+    // from onReplyFinished so each method stays small and single-purpose.
+    void emitResult(const QByteArray& body);
 
     [[nodiscard]] QString transcribeUrl() const;
 
