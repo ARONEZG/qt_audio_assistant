@@ -1,7 +1,38 @@
 #include "domain/Chat.h"
 
 #include <cstddef>
+#include <optional>
 #include <utility>
+
+namespace {
+
+// One user-facing line for a typed failure. The summary names the kind of
+// failure; the provider's detail (HTTP status, network text) is appended when it
+// carries information. kCancelled is deliberately not a failure and yields no
+// value, so a cancelled answer can never surface as an error.
+std::optional<QString> failureText(ProviderError error, const QString& detail) {
+    if (error == ProviderError::kCancelled) {
+        return std::nullopt;
+    }
+
+    QString summary = QStringLiteral("Unexpected error");
+    if (error == ProviderError::kNetwork) {
+        summary = QStringLiteral("Network error");
+    } else if (error == ProviderError::kAuthentication) {
+        summary = QStringLiteral("Authentication failed");
+    } else if (error == ProviderError::kRateLimit) {
+        summary = QStringLiteral("Rate limit exceeded");
+    } else if (error == ProviderError::kInvalidResponse) {
+        summary = QStringLiteral("Invalid response from provider");
+    }
+
+    if (detail.isEmpty()) {
+        return summary;
+    }
+    return QStringLiteral("%1: %2").arg(summary, detail);
+}
+
+}  // namespace
 
 Chat::Chat(std::unique_ptr<Provider> provider, QObject* parent)
     : QAbstractListModel(parent), provider_(std::move(provider)) {
@@ -64,6 +95,14 @@ bool Chat::isStreaming() const noexcept {
     return isStreaming_;
 }
 
+QString Chat::errorText() const {
+    return errorText_;
+}
+
+bool Chat::hasError() const noexcept {
+    return hasError_;
+}
+
 QString Chat::providerId() const {
     return provider_->id();
 }
@@ -76,6 +115,9 @@ void Chat::send(const QString& text) {
     if (isStreaming_ || text.isEmpty()) {
         return;
     }
+    // A new request supersedes the failure of the previous one. An ignored send
+    // (streaming or blank text) is not a new request and leaves it untouched.
+    clearError();
     appendMessage(Message(MessageRole::kUser, text));
     startStreaming();
 }
@@ -142,6 +184,21 @@ void Chat::setStreaming(bool streaming) {
     emit stateChanged();
 }
 
+void Chat::setErrorText(const QString& text) {
+    errorText_ = text;
+    hasError_ = true;
+    emit errorTextChanged();
+}
+
+void Chat::clearError() {
+    if (!hasError_) {
+        return;
+    }
+    errorText_.clear();
+    hasError_ = false;
+    emit errorTextChanged();
+}
+
 void Chat::onChunkReceived(const QString& chunk) {
     setStreamingText(streamingText_ + chunk);
 }
@@ -154,6 +211,9 @@ void Chat::onAnswerCompleted(const Message& message) {
 
 void Chat::onAnswerFailed(ProviderError error, const QString& detail) {
     stopStreaming();
+    if (const std::optional<QString> kText = failureText(error, detail); kText.has_value()) {
+        setErrorText(*kText);
+    }
     emit failed(error, detail);
 }
 

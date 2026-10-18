@@ -13,6 +13,21 @@
 #include "domain/Message.h"
 #include "domain/ProviderError.h"
 
+namespace {
+
+// Runs one request through the fake provider and returns what the chat exposes
+// after the failure, keeping the mapping test itself a flat table check.
+QString errorTextAfterFailure(ProviderError error, const QString& detail) {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    fake->lastAnswer()->fail(error, detail);
+    return chat.errorText();
+}
+
+}  // namespace
+
 class TestChat : public QObject {
     Q_OBJECT
 
@@ -27,6 +42,13 @@ private slots:
     void test_completeAppendsReplyAndResetsStreaming();
     void test_cancelResetsStreamingWithoutReply();
     void test_failResetsStreamingAndEmitsFailed();
+    void test_failureExposesErrorText();
+    void test_failureWithoutDetailUsesSummary();
+    void test_failureTextMapsEveryProviderError_data();
+    void test_failureTextMapsEveryProviderError();
+    void test_sendClearsPreviousError();
+    void test_cancelDoesNotSetError();
+    void test_cancelledFailureDoesNotSetError();
     void test_sendWhileStreamingIsIgnored();
     void test_cancelWithoutStreamingIsNoOp();
     void test_sequentialSendsPreserveHistory();
@@ -58,6 +80,8 @@ void TestChat::test_initialState() {
     QCOMPARE(kChat.messages().size(), std::size_t{0});
     QCOMPARE(kChat.streamingText(), QString());
     QCOMPARE(kChat.isStreaming(), false);
+    QCOMPARE(kChat.errorText(), QString());
+    QCOMPARE(kChat.hasError(), false);
 }
 
 void TestChat::test_sendAppendsUserMessageAndStartsStreaming() {
@@ -164,8 +188,109 @@ void TestChat::test_failResetsStreamingAndEmitsFailed() {
     QCOMPARE(kFailedSpy.count(), 1);
     QCOMPARE(kFailedSpy.at(0).at(0).value<ProviderError>(), ProviderError::kNetwork);
     QCOMPARE(kFailedSpy.at(0).at(1).toString(), QStringLiteral("offline"));
+    QCOMPARE(chat.hasError(), true);
+    QCOMPARE(chat.errorText(), QStringLiteral("Network error: offline"));
     QCOMPARE(kStateSpy.count(), 1);
     QCOMPARE(kTextSpy.count(), 2);
+}
+
+void TestChat::test_failureExposesErrorText() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    const QSignalSpy kErrorSpy(&chat, &Chat::errorTextChanged);
+
+    fake->lastAnswer()->fail(ProviderError::kAuthentication, QStringLiteral("invalid key"));
+
+    QCOMPARE(chat.hasError(), true);
+    QCOMPARE(chat.errorText(), QStringLiteral("Authentication failed: invalid key"));
+    QCOMPARE(kErrorSpy.count(), 1);
+}
+
+void TestChat::test_failureWithoutDetailUsesSummary() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+
+    fake->lastAnswer()->fail(ProviderError::kRateLimit, QString());
+
+    // The typed summary alone is still a user-visible reason, so an empty detail
+    // does not hide the failure.
+    QCOMPARE(chat.hasError(), true);
+    QCOMPARE(chat.errorText(), QStringLiteral("Rate limit exceeded"));
+}
+
+void TestChat::test_failureTextMapsEveryProviderError_data() {
+    QTest::addColumn<ProviderError>("error");
+    QTest::addColumn<QString>("expected");
+
+    QTest::newRow("network") << ProviderError::kNetwork << QStringLiteral("Network error: detail");
+    QTest::newRow("authentication") << ProviderError::kAuthentication
+                                    << QStringLiteral("Authentication failed: detail");
+    QTest::newRow("rate-limit") << ProviderError::kRateLimit << QStringLiteral("Rate limit exceeded: detail");
+    QTest::newRow("invalid-response") << ProviderError::kInvalidResponse
+                                      << QStringLiteral("Invalid response from provider: detail");
+    QTest::newRow("unknown") << ProviderError::kUnknown << QStringLiteral("Unexpected error: detail");
+}
+
+void TestChat::test_failureTextMapsEveryProviderError() {
+    // QFETCH cannot declare a const variable; clang-tidy's const-correctness
+    // check is suppressed for the same reason as in the other data-driven tests.
+    QFETCH(ProviderError, error);  // NOLINT(misc-const-correctness)
+    QFETCH(QString, expected);     // NOLINT(misc-const-correctness)
+
+    QCOMPARE(errorTextAfterFailure(error, QStringLiteral("detail")), expected);
+}
+
+void TestChat::test_sendClearsPreviousError() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    fake->lastAnswer()->fail(ProviderError::kAuthentication, QStringLiteral("invalid key"));
+    QCOMPARE(chat.hasError(), true);
+    const QSignalSpy kErrorSpy(&chat, &Chat::errorTextChanged);
+
+    chat.send(QStringLiteral("try again"));
+
+    QCOMPARE(chat.hasError(), false);
+    QCOMPARE(chat.errorText(), QString());
+    QCOMPARE(kErrorSpy.count(), 1);
+    QCOMPARE(chat.messages().size(), std::size_t{2});
+    QCOMPARE(fake->respondCount(), 2);
+}
+
+void TestChat::test_cancelDoesNotSetError() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+
+    chat.cancel();
+
+    // Cancellation is a user intent, not a failure: it must not leave an error
+    // banner behind.
+    QCOMPARE(chat.hasError(), false);
+    QCOMPARE(chat.errorText(), QString());
+    QCOMPARE(fake->lastAnswer()->isCancelled(), true);
+}
+
+void TestChat::test_cancelledFailureDoesNotSetError() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    const QSignalSpy kFailedSpy(&chat, &Chat::failed);
+
+    // Defensive: a provider must not turn kCancelled into a visible error even
+    // if it reports it through fail() instead of cancel().
+    fake->lastAnswer()->fail(ProviderError::kCancelled, QStringLiteral("cancelled by user"));
+
+    QCOMPARE(chat.hasError(), false);
+    QCOMPARE(chat.errorText(), QString());
+    QCOMPARE(kFailedSpy.count(), 1);
 }
 
 void TestChat::test_sendWhileStreamingIsIgnored() {
