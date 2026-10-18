@@ -14,6 +14,11 @@ class QNetworkReply;
 // endpoint (the MVP's "Polza AI" is one such endpoint; the URL, model and key
 // are configuration, so the class is named for the protocol, not a vendor).
 //
+// Request shape: JSON with a base64 data-URL `file`. That is the schema Polza
+// documents for /audio/transcriptions. A stock OpenAI endpoint expects
+// multipart/form-data instead, so pointing this adapter at one would require a
+// multipart mode in the request builder (the role interface would not change).
+//
 // It is an adapter and nothing else: it is the single seam where a captured PCM
 // block becomes an HTTP request and an HTTP response becomes domain signals -
 //
@@ -40,9 +45,13 @@ class OpenAiCompatibleTranscriber : public TranscriptionProvider {
     Q_DISABLE_COPY_MOVE(OpenAiCompatibleTranscriber)
 
 public:
+    // transferTimeoutMs > 0 overrides QNetworkAccessManager's transfer timeout
+    // for this transcriber (a stalled endpoint must still produce exactly one
+    // terminal signal); <= 0 keeps the manager's default.
     explicit OpenAiCompatibleTranscriber(QString baseUrl,
                                          QString apiKey,
                                          QString model = QStringLiteral("openai/whisper-1"),
+                                         int transferTimeoutMs = 0,
                                          QObject* parent = nullptr);
     ~OpenAiCompatibleTranscriber() override;
 
@@ -59,9 +68,11 @@ private:
     // Fails from the event loop so transcribe() never emits synchronously (the
     // TranscriptionProvider contract).
     void scheduleFailure(ProviderError error, const QString& message);
-    // Aborts and disposes of the active reply (if any) and emits the terminal
-    // failure it was waiting for. Shared by cancel() and the supersede path.
-    void abortActive(ProviderError error, const QString& message);
+    // Aborts and disposes of the active reply (if any). Returns true when a
+    // reply was in flight. It deliberately does not emit: cancel() reports the
+    // abandonment synchronously, while a superseding transcribe() schedules the
+    // failure so it still never emits inside its own call.
+    [[nodiscard]] bool abortActive();
     void onReplyFinished();
 
     [[nodiscard]] QString transcribeUrl() const;

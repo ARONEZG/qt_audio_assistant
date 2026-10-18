@@ -18,8 +18,9 @@ namespace audio {
 // sample rate and channel count written into the header; the sample encoding is
 // always 32-bit float (the only SampleFormat defined, and the canonical capture
 // encoding), so no encoding branch exists here. Samples are expected in
-// [-1, 1]; values outside that range are clamped, so a source glitch can never
-// wrap around into a loud pop.
+// [-1, 1]; finite values outside that range are clamped, while non-finite values
+// (NaN/inf - corrupt input) become silence, so a source glitch can never wrap
+// around into a loud pop.
 //
 // Output: a byte-exact RIFF file - "RIFF" + "fmt " + "data" chunks, 16-bit
 // little-endian PCM, 44-byte header. Empty input yields a valid header with a
