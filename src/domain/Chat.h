@@ -7,8 +7,10 @@
 #include <QHash>
 #include <QObject>
 #include <QString>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "domain/Message.h"
@@ -41,6 +43,9 @@ class Chat : public QAbstractListModel {
     Q_PROPERTY(QString providerId READ providerId CONSTANT)
     Q_PROPERTY(QString providerName READ providerName CONSTANT)
     Q_PROPERTY(QString streamingText READ streamingText NOTIFY streamingTextChanged)
+    // The live reply as sanitised Markdown, so the streaming tail renders it
+    // through the same safety boundary as the finished message (SafeMarkdown).
+    Q_PROPERTY(QString streamingMarkup READ streamingMarkup NOTIFY streamingTextChanged)
     Q_PROPERTY(bool streaming READ isStreaming NOTIFY stateChanged)
     // Last failed request, presented to the user. Transient like streamingText:
     // an accepted send() starts a new request and clears it. Cancellation is not
@@ -55,6 +60,11 @@ public:
     enum Role : std::uint16_t {
         kTextRole = static_cast<std::uint16_t>(Qt::UserRole) + 1,
         kIsUserRole,
+        // Display-ready text: the assistant's Markdown is neutralised in C++
+        // (SafeMarkdown), while the user's own text is passed through verbatim
+        // because a view shows it as plain text. The raw `text` role stays for
+        // accessibility, so a screen reader never reads Markdown escapes.
+        kMarkupRole,
     };
 
     // Takes ownership of the provider. The provider must not be null.
@@ -67,6 +77,7 @@ public:
 
     [[nodiscard]] const std::vector<Message>& messages() const noexcept;
     [[nodiscard]] QString streamingText() const;
+    [[nodiscard]] QString streamingMarkup() const;
     [[nodiscard]] bool isStreaming() const noexcept;
     [[nodiscard]] QString errorText() const;
     [[nodiscard]] bool hasError() const noexcept;
@@ -96,6 +107,8 @@ signals:
 
 private:
     [[nodiscard]] bool isValidRow(int index) const noexcept;
+    // Display text of one row, sanitised on first request and memoised.
+    [[nodiscard]] QString markupAt(std::size_t row) const;
 
     void appendMessage(const Message& message);
     void startStreaming();
@@ -115,7 +128,16 @@ private:
 
     std::unique_ptr<Provider> provider_;
     std::vector<Message> messages_;
+    // Display markup memoised per row and aligned index-for-index with messages_.
+    // data(kMarkupRole) is queried many times per row while a view scrolls or
+    // lays out; without the cache every query would re-parse the message. Filled
+    // lazily so a headless consumer that never asks for markup never pays for it.
+    mutable std::vector<std::optional<QString>> markupCache_;
     QString streamingText_;
+    // Memoised streaming markup: recomputed only when the live text changes, so a
+    // view that reads the property several times per chunk sanitises once.
+    mutable QString streamingMarkupCache_;
+    mutable bool streamingMarkupDirty_ = false;
     QString errorText_;
     bool hasError_ = false;
     bool isStreaming_ = false;

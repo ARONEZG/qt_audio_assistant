@@ -243,7 +243,10 @@ jobs:
   static-analysis:
     name: "Static Analysis"
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # clang-tidy over the whole project is the long pole; the budget has to fit
+    # setup+build + clang-tidy + clazy + cppcheck. Keep headroom as the codebase
+    # grows instead of letting the job be cancelled mid-analysis.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -301,7 +304,12 @@ jobs:
 
       - name: clang-tidy
         run: |
-          src_files=$(find src tests -name '*.cpp' -o -name '*.h' -o -name '*.hpp' | sort)
+          # Translation units only, as the local mirror (scripts/static-analysis.sh)
+          # and the clazy step below do: a header is parsed through every TU that
+          # includes it, and HeaderFilterRegex still reports header diagnostics.
+          # Listing headers separately re-parses them without a useful compile
+          # command and roughly doubles the runtime of this job.
+          src_files=$(find src tests -name '*.cpp' | sort)
           if [ -z "$src_files" ]; then
             echo "No source files found"
             exit 0

@@ -4,6 +4,8 @@
 #include <optional>
 #include <utility>
 
+#include "domain/SafeMarkdown.h"
+
 namespace {
 
 // One user-facing line for a typed failure. The summary names the kind of
@@ -70,6 +72,9 @@ QVariant Chat::data(const QModelIndex& index, int role) const {
     if (role == kIsUserRole) {
         return message.isUser();
     }
+    if (role == kMarkupRole) {
+        return markupAt(static_cast<std::size_t>(index.row()));
+    }
     return {};
 }
 
@@ -80,6 +85,7 @@ QHash<int, QByteArray> Chat::roleNames() const {
     QHash<int, QByteArray> roles;
     roles.insert(kTextRole, QByteArrayLiteral("text"));
     roles.insert(kIsUserRole, QByteArrayLiteral("isUser"));
+    roles.insert(kMarkupRole, QByteArrayLiteral("markup"));
     return roles;
 }
 
@@ -89,6 +95,16 @@ const std::vector<Message>& Chat::messages() const noexcept {
 
 QString Chat::streamingText() const {
     return streamingText_;
+}
+
+QString Chat::streamingMarkup() const {
+    if (streamingMarkupDirty_) {
+        // The live reply is assistant content too: sanitise it so the streaming
+        // tail is rendered through the same boundary as the finished message.
+        streamingMarkupCache_ = SafeMarkdown(streamingText_).text();
+        streamingMarkupDirty_ = false;
+    }
+    return streamingMarkupCache_;
 }
 
 bool Chat::isStreaming() const noexcept {
@@ -140,11 +156,27 @@ void Chat::appendMessage(const Message& message) {
     const int kRow = static_cast<int>(messages_.size());
     beginInsertRows(QModelIndex(), kRow, kRow);
     messages_.push_back(message);
+    // Keep the memoisation aligned with the history; the value is filled in on
+    // the first kMarkupRole query.
+    markupCache_.emplace_back(std::nullopt);
     endInsertRows();
 }
 
 bool Chat::isValidRow(int index) const noexcept {
     return index >= 0 && index < static_cast<int>(messages_.size());
+}
+
+QString Chat::markupAt(std::size_t row) const {
+    std::optional<QString>& cached = markupCache_[row];
+    if (cached.has_value()) {
+        return *cached;
+    }
+    // The user writes plain text and it is shown verbatim; the assistant's text
+    // is untrusted, so it is neutralised before the view can render it.
+    const Message& kMessage = messages_[row];
+    const QString kMarkup = kMessage.isUser() ? kMessage.text() : SafeMarkdown(kMessage.text()).text();
+    cached = kMarkup;
+    return kMarkup;
 }
 
 void Chat::startStreaming() {
@@ -173,6 +205,8 @@ void Chat::setStreamingText(const QString& text) {
         return;
     }
     streamingText_ = text;
+    // Invalidate the memoised markup; it is recomputed on the next read.
+    streamingMarkupDirty_ = true;
     emit streamingTextChanged();
 }
 

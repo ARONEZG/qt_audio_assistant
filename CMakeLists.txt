@@ -330,6 +330,7 @@ add_library(audio-assistant-domain STATIC
     src/domain/ProviderOffer.cpp
     src/domain/ProviderSettings.cpp
     src/domain/Providers.cpp
+    src/domain/SafeMarkdown.cpp
 )
 
 set_target_properties(audio-assistant-domain PROPERTIES
@@ -351,9 +352,11 @@ target_include_directories(audio-assistant-domain PRIVATE
 # Qt6::Qml is public because the domain types carry the QML registration macros
 # (QML_ELEMENT) in their headers; every consumer of the headers needs the Qml
 # include path. The types are the view models, so there is no separate adapter.
+# Qt6::Gui is private: SafeMarkdown sanitises untrusted assistant text through
+# QTextDocument, an implementation detail no header exposes.
 target_link_libraries(audio-assistant-domain
     PUBLIC Qt6::Core Qt6::Qml
-    PRIVATE audio-assistant-strict audio-assistant-qt-warnings
+    PRIVATE audio-assistant-strict audio-assistant-qt-warnings Qt6::Gui
 )
 
 # ── QML module ──────────────────────────────────────────────
@@ -466,6 +469,17 @@ audio_assistant_add_domain_test(tst_chat
     tests/FakeProvider.cpp
     tests/FakeProvider.h
 )
+# The chat model exposes sanitised Markdown (SafeMarkdown), which uses
+# QTextDocument and therefore a QGuiApplication: the test runs under QTEST_MAIN
+# with Qt6::Gui, not QTEST_GUILESS_MAIN.
+target_link_libraries(tst_chat PRIVATE Qt6::Gui)
+
+audio_assistant_add_domain_test(tst_safe_markdown
+    tests/tst_safe_markdown.cpp
+)
+# SafeMarkdown is Qt Gui based (QTextDocument), so its test needs a
+# QGuiApplication (QTEST_MAIN) just like tst_chat.
+target_link_libraries(tst_safe_markdown PRIVATE Qt6::Gui)
 audio_assistant_add_domain_test(tst_providers
     tests/tst_providers.cpp
     tests/FakeProvider.cpp

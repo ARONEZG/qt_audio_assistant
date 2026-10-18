@@ -58,6 +58,49 @@ QObject* findInItems(QQuickItem* root, const QString& name) {
     return QString::fromUtf8(file.readAll());
 }
 
+// Every item with the given objectName, in contrast to findInItems which stops at
+// the first match: a transcript has one delegate (and one label) per message.
+[[nodiscard]] std::vector<QQuickItem*> collectItems(QQuickItem* root, const QString& name) {
+    std::vector<QQuickItem*> found;
+    std::vector<QQuickItem*> pending{root};
+    while (!pending.empty()) {
+        QQuickItem* item = pending.back();
+        pending.pop_back();
+        if (item == nullptr) {
+            continue;
+        }
+        if (item->objectName() == name) {
+            found.push_back(item);
+        }
+        const QList<QQuickItem*> kChildren = item->childItems();
+        pending.insert(pending.end(), kChildren.cbegin(), kChildren.cend());
+    }
+    return found;
+}
+
+// The label Text of the one delegate whose `isUser` matches, or nullptr while no
+// such delegate has been materialised yet.
+[[nodiscard]] QObject* messageLabel(QQuickWindow* window, bool isUser) {
+    for (QQuickItem* delegate : collectItems(window->contentItem(), QStringLiteral("messageDelegate"))) {
+        if (delegate->property("isUser").toBool() == isUser) {
+            return findInItems(delegate, QStringLiteral("messageText"));
+        }
+    }
+    return nullptr;
+}
+
+// Mirrors SafeMarkdown's invariant: no '<' may reach the renderer unescaped.
+[[nodiscard]] bool hasUnescapedAngleBracket(const QString& markdown) {
+    int precedingBackslashes = 0;
+    for (const QChar kCharacter : markdown) {
+        if (kCharacter == QLatin1Char('<') && precedingBackslashes % 2 == 0) {
+            return true;
+        }
+        precedingBackslashes = kCharacter == QLatin1Char('\\') ? precedingBackslashes + 1 : 0;
+    }
+    return false;
+}
+
 // Everything a QML run needs, composed exactly as main() does it: a provider
 // list, a chat grid and the thin invokable that joins them. The provider is a
 // fake, so the test acts as the network and no real request is ever made.
@@ -149,6 +192,8 @@ private slots:
     void test_addChatButtonCreatesAChat();
     void test_sendButtonForwardsTypedTextToTheChat();
     void test_streamingTailShowsTheLiveReply();
+    void test_messageDelegateRendersAssistantMarkdownAndUserPlainText();
+    void test_streamingTailRendersSanitisedMarkdown();
     void test_chatFailureShowsTheError();
     void test_providerSettingsFieldsAreBound();
     void test_apiKeyFieldIsMasked();
@@ -218,6 +263,56 @@ void TestQmlChat::test_streamingTailShowsTheLiveReply() {
     harness.minted().at(0)->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("Hello")));
     QCOMPARE(chat->rowCount(), 2);
     QCOMPARE(chat->streamingText(), QString());
+}
+
+void TestQmlChat::test_messageDelegateRendersAssistantMarkdownAndUserPlainText() {
+    Harness harness;
+    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
+    QCoreApplication::processEvents();
+    Chat* chat = harness.chats().at(0);
+    chat->send(QStringLiteral("<b>hi</b>"));
+    harness.minted().at(0)->lastAnswer()->complete(
+            Message(MessageRole::kAssistant, QStringLiteral("**bold** <script>x</script>")));
+    QCoreApplication::processEvents();
+
+    auto* window = qobject_cast<QQuickWindow*>(harness.root());
+    QVERIFY(window != nullptr);
+    // The ListView materialises delegates across event-loop passes, so poll for
+    // both rows before inspecting them (QTest::qWaitFor, no fixed sleep).
+    QVERIFY(QTest::qWaitFor(
+            [window] { return collectItems(window->contentItem(), QStringLiteral("messageDelegate")).size() == 2; }));
+
+    QObject* userLabel = messageLabel(window, true);
+    QObject* assistantLabel = messageLabel(window, false);
+    QVERIFY(userLabel != nullptr);
+    QVERIFY(assistantLabel != nullptr);
+
+    // The user's own message is plain text, shown exactly as typed.
+    QCOMPARE(userLabel->property("textFormat").toInt(), static_cast<int>(Qt::PlainText));
+    QCOMPARE(userLabel->property("text").toString(), QStringLiteral("<b>hi</b>"));
+
+    // The assistant's reply is Markdown, sanitised in C++ first.
+    QCOMPARE(assistantLabel->property("textFormat").toInt(), static_cast<int>(Qt::MarkdownText));
+    const QString kAssistantText = assistantLabel->property("text").toString();
+    QVERIFY(kAssistantText.contains(QStringLiteral("**bold**")));
+    QVERIFY(!hasUnescapedAngleBracket(kAssistantText));
+}
+
+void TestQmlChat::test_streamingTailRendersSanitisedMarkdown() {
+    Harness harness;
+    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
+    Chat* chat = harness.chats().at(0);
+    chat->send(QStringLiteral("hi"));
+    harness.minted().at(0)->lastAnswer()->appendChunk(QStringLiteral("**live** <script>bad</script>"));
+    QCoreApplication::processEvents();
+
+    QObject* tail = harness.child(QStringLiteral("streamingTail"));
+    QVERIFY(tail != nullptr);
+    QCOMPARE(tail->property("visible").toBool(), true);
+    QCOMPARE(tail->property("textFormat").toInt(), static_cast<int>(Qt::MarkdownText));
+    const QString kText = tail->property("text").toString();
+    QVERIFY(kText.contains(QStringLiteral("**live**")));
+    QVERIFY(!hasUnescapedAngleBracket(kText));
 }
 
 void TestQmlChat::test_chatFailureShowsTheError() {
