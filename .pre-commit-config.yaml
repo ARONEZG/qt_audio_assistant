@@ -56,12 +56,22 @@ repos:
         name: "qmlformat"
         entry: >
           bash -c '
-            QMLFORMAT="/usr/lib/qt6/bin/qmlformat";
+            QMLFORMAT="";
             for prefix in "$HOME/Qt/6.8.3/gcc_64" "${QTDIR:-}" /opt/Qt/6.8.3/gcc_64; do
               if [ -n "$prefix" ] && [ -x "$prefix/bin/qmlformat" ]; then
                 QMLFORMAT="$prefix/bin/qmlformat"; break;
               fi;
             done;
+            if [ -z "$QMLFORMAT" ]; then
+              for candidate in /usr/lib/qt6/bin/qmlformat /usr/lib/qt6/bin/qmlformat6 qmlformat; do
+                if command -v "$candidate" >/dev/null 2>&1; then
+                  QMLFORMAT="$candidate"; break;
+                fi;
+              done;
+            fi;
+            if [ -z "$QMLFORMAT" ]; then
+              echo "qmlformat not found"; exit 1;
+            fi;
             FILES=$(git diff --cached --name-only --diff-filter=ACMR |
                     grep -E "\.qml$" || true);
             TMP=$(mktemp);

@@ -106,6 +106,21 @@ QObject* findInItems(QQuickItem* root, const QString& name) {
     return painted;
 }
 
+// Whether a view (a Flickable, so a ListView too) shows the end of its content.
+[[nodiscard]] bool isScrolledToEnd(QQuickItem* view) {
+    return view->property("contentY").toReal() + view->height() >= view->property("contentHeight").toReal() - 1.0;
+}
+
+// A reply far taller than one chat panel: the streaming tail of this text
+// overflows the transcript viewport.
+[[nodiscard]] QString longReasoning() {
+    QString text;
+    for (int line = 0; line < 200; ++line) {
+        text += QStringLiteral("reasoning line %1\n").arg(line);
+    }
+    return text;
+}
+
 // Mirrors SafeMarkdown's invariant: no '<' may reach the renderer unescaped.
 [[nodiscard]] bool hasUnescapedAngleBracket(const QString& markdown) {
     int precedingBackslashes = 0;
@@ -213,6 +228,7 @@ private slots:
     void test_streamingTailRendersSanitisedMarkdown();
     void test_streamingTailFollowsEachAnswer();
     void test_streamingTailStaysInsideTheChatPanel();
+    void test_streamingTailFollowsOnlyWhileAtTheEnd();
     void test_chatFailureShowsTheError();
     void test_providerSettingsFieldsAreBound();
     void test_apiKeyFieldIsMasked();
@@ -382,11 +398,7 @@ void TestQmlChat::test_streamingTailStaysInsideTheChatPanel() {
     Chat* chat = harness.chats().at(0);
     chat->send(QStringLiteral("hi"));
     // Far taller than one panel: without containment this overflowed the chat.
-    QString longReply;
-    for (int line = 0; line < 200; ++line) {
-        longReply += QStringLiteral("reasoning line %1\n").arg(line);
-    }
-    harness.minted().at(0)->lastAnswer()->appendChunk(longReply);
+    harness.minted().at(0)->lastAnswer()->appendChunk(longReasoning());
     QCoreApplication::processEvents();
 
     QQuickItem* windowRoot = window->contentItem();
@@ -405,7 +417,9 @@ void TestQmlChat::test_streamingTailStaysInsideTheChatPanel() {
 
     // The tail is on screen (its painted part is non-empty) ...
     QVERIFY(kPaintedTail.height() > 0);
-    // ... and entirely within the panel that owns it.
+    // ... and inside the panel that owns it. The panel's rounded corners are not
+    // modelled (contains() is a rectangle test), but the transcript is inset by
+    // the panel margins, so a corner cannot be the way the tail escapes.
     QVERIFY(kPanel.contains(kPaintedTail));
 
     // The transcript scrolls itself to the end, so a clipped tail shows the
@@ -413,9 +427,53 @@ void TestQmlChat::test_streamingTailStaysInsideTheChatPanel() {
     QQuickItem* transcript = qobject_cast<QQuickItem*>(findInItems(windowRoot, QStringLiteral("transcript")));
     QVERIFY(transcript != nullptr);
     QVERIFY(transcript->property("contentHeight").toReal() > transcript->height());
-    QVERIFY(QTest::qWaitFor([transcript] {
-        return transcript->property("contentY").toReal() + transcript->height() >=
-               transcript->property("contentHeight").toReal() - 1.0;
+    QVERIFY(QTest::qWaitFor([transcript] { return isScrolledToEnd(transcript); }));
+}
+
+// The transcript follows the growing answer only while its end is on screen: a
+// user who scrolls back through the history keeps their place, and returning to
+// the end resumes following.
+void TestQmlChat::test_streamingTailFollowsOnlyWhileAtTheEnd() {
+    Harness harness;
+    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
+    QCoreApplication::processEvents();
+    auto* window = qobject_cast<QQuickWindow*>(harness.root());
+    QVERIFY(window != nullptr);
+
+    Chat* chat = harness.chats().at(0);
+    chat->send(QStringLiteral("hi"));
+    harness.minted().at(0)->lastAnswer()->appendChunk(longReasoning());
+    QCoreApplication::processEvents();
+
+    QQuickItem* transcript =
+            qobject_cast<QQuickItem*>(findInItems(window->contentItem(), QStringLiteral("transcript")));
+    QVERIFY(transcript != nullptr);
+    // The tail is followed to the end first.
+    QVERIFY(QTest::qWaitFor([transcript] { return isScrolledToEnd(transcript); }));
+
+    // The user scrolls one viewport back into the history.
+    const double kReadBack =
+            transcript->property("contentHeight").toReal() - transcript->height() - transcript->height();
+    QVERIFY(kReadBack >= 0.0);
+    QVERIFY(transcript->setProperty("contentY", kReadBack));
+    QCoreApplication::processEvents();
+    QCOMPARE(transcript->property("contentY").toReal(), kReadBack);
+
+    // The next chunk adds content without pulling the user back down: a new
+    // paragraph always adds a line.
+    const double kContentHeightWhileReading = transcript->property("contentHeight").toReal();
+    harness.minted().at(0)->lastAnswer()->appendChunk(QStringLiteral("\n\nsecond reasoning paragraph\n"));
+    QCoreApplication::processEvents();
+    QVERIFY(transcript->property("contentHeight").toReal() > kContentHeightWhileReading);
+    QCOMPARE(transcript->property("contentY").toReal(), kReadBack);
+
+    // Returning to the end resumes following: the next chunk scrolls again.
+    const double kEnd = transcript->property("contentHeight").toReal() - transcript->height();
+    QVERIFY(transcript->setProperty("contentY", kEnd));
+    const double kContentHeightAtEnd = transcript->property("contentHeight").toReal();
+    harness.minted().at(0)->lastAnswer()->appendChunk(QStringLiteral("\n\nthird reasoning paragraph\n"));
+    QVERIFY(QTest::qWaitFor([transcript, kContentHeightAtEnd] {
+        return transcript->property("contentHeight").toReal() > kContentHeightAtEnd && isScrolledToEnd(transcript);
     }));
 }
 

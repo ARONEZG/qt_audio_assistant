@@ -31,13 +31,16 @@ Item {
         }
         Accessible.name: qsTr("Conversation")
 
-        // The in-flight answer, shown as the last row of the transcript. A
-        // hidden footer still reserves its height in the view, so the container
-        // collapses to nothing between answers instead of leaving a gap.
+        // The in-flight answer as the last row of the transcript. The container
+        // exists for the whole chat, but between answers the tail is hidden and
+        // the container's height collapses to zero: an invisible footer item
+        // still occupies the height it reports.
         footer: Item {
             id: tailContainer
 
             width: transcript.width
+            // ListView.spacing separates delegates only, so this is the single
+            // gap before the tail (the Text itself is offset by it).
             height: streamingTail.visible ? streamingTail.implicitHeight + Theme.spacingTight : 0
 
             Text {
@@ -60,11 +63,28 @@ Item {
             }
         }
 
-        // Keep the newest content visible: a new message, every growth of the
-        // streaming tail and every resize of the view (the tail is the last row,
-        // so it scrolls into view with the rest of the transcript).
+        // Whether the newest content is kept on screen. Every scroll that is not
+        // our own follow (wheel, drag, flick) hands the view to the user, and
+        // scrolling back to the end resumes following.
+        property bool followTail: true
+
+        onContentYChanged: followTail = atYEnd
+
+        // A new message - and the answer it completes into - is always brought
+        // into view; the tail only grows while it is followed, so a user reading
+        // the history is not pulled down by every chunk.
         onCountChanged: positionViewAtEnd()
-        onContentHeightChanged: positionViewAtEnd()
-        onHeightChanged: positionViewAtEnd()
+
+        onContentHeightChanged: {
+            if (followTail) {
+                positionViewAtEnd();
+            }
+        }
+
+        onHeightChanged: {
+            if (followTail) {
+                positionViewAtEnd();
+            }
+        }
     }
 }
