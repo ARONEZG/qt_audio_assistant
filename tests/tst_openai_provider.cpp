@@ -57,6 +57,17 @@ void endChunked(QTcpSocket& socket) {
     socket.disconnectFromHost();
 }
 
+// A 200 response that promises more bytes than it sends and then closes. With an
+// unsatisfied Content-Length the truncation is a protocol error, so the client
+// deterministically reports a transport failure - unlike a chunked body cut
+// short, whose handling depends on timing.
+void writeTruncatedSseResponse(QTcpSocket& socket, const QByteArray& data) {
+    const QByteArray kEvent = "data: " + data + "\r\n\r\n";
+    socket.write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: " +
+                 QByteArray::number(kEvent.size() + 64) + "\r\n\r\n" + kEvent);
+    socket.disconnectFromHost();
+}
+
 void writeHttpError(QTcpSocket& socket, int status, const QByteArray& reason, const QByteArray& message) {
     const QJsonObject kError{{QStringLiteral("message"), QString::fromUtf8(message)},
                              {QStringLiteral("type"), QStringLiteral("invalid_request_error")},
@@ -236,12 +247,10 @@ void TestOpenAiProvider::test_interruptedStreamFails() {
     OpenAiMockServer server;
     QVERIFY(server.listen());
     server.setHandler([](QTcpSocket& socket, const QByteArray&) {
-        writeChunkedHeaders(socket);
-        writeSseEvent(socket, contentChunk("par"));
-        socket.flush();
-        // Abort mid-stream (RST), without the terminating zero-length chunk: the
-        // response is incomplete and must surface as a transport failure.
-        socket.abort();
+        // Stream one frame, then close before the promised Content-Length is
+        // satisfied: the response is incomplete and must surface as a transport
+        // failure.
+        writeTruncatedSseResponse(socket, contentChunk("par"));
     });
     const auto kProvider = makeProvider(server);
 
