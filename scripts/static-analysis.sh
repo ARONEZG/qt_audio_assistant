@@ -109,7 +109,17 @@ find_clang_tidy() {
     echo ""
 }
 
+# qmlformat must be the Qt the QML module is built against too: the distro
+# qt6-tools on this machine ship 6.4.2, whose formatter garbles valid Qt 6 QML
+# (`pragma ComponentBehavior: Bound` loses its value), so the check would reject
+# correctly formatted files.
 find_qmlformat() {
+    local qt_bin
+    qt_bin=$(project_qt_bin)
+    if [ -n "$qt_bin" ] && [ -x "$qt_bin/qmlformat" ]; then
+        echo "$qt_bin/qmlformat"
+        return
+    fi
     for candidate in /usr/lib/qt6/bin/qmlformat /usr/lib/qt6/bin/qmlformat6 qmlformat; do
         if command -v "$candidate" &>/dev/null; then
             echo "$candidate"
