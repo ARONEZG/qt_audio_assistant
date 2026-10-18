@@ -310,8 +310,10 @@ void TestQmlChat::test_streamingTailRendersSanitisedMarkdown() {
     QVERIFY(tail != nullptr);
     QCOMPARE(tail->property("visible").toBool(), true);
     QCOMPARE(tail->property("textFormat").toInt(), static_cast<int>(Qt::MarkdownText));
+    // The sanitised live markup is republished at the domain's throttle cadence,
+    // so poll for the rebound value instead of assuming one event-loop pass.
+    QVERIFY(QTest::qWaitFor([tail] { return tail->property("text").toString().contains(QStringLiteral("**live**")); }));
     const QString kText = tail->property("text").toString();
-    QVERIFY(kText.contains(QStringLiteral("**live**")));
     QVERIFY(!hasUnescapedAngleBracket(kText));
 }
 

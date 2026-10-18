@@ -12,6 +12,7 @@
 #include "domain/Chat.h"
 #include "domain/Message.h"
 #include "domain/ProviderError.h"
+#include "domain/SafeMarkdown.h"
 
 namespace {
 
@@ -76,7 +77,13 @@ private slots:
     void test_markupRoleSanitisesAssistantText();
     void test_markupRoleIsMemoisedAcrossReads();
     void test_streamingMarkupSanitisesLiveAnswer();
-    void test_streamingMarkupIsRecomputedOnlyWhenTextChanges();
+    void test_streamingMarkupCoalescesChunksWithinThrottle();
+    void test_streamingMarkupRepublishesForLaterChunks();
+    void test_streamingMarkupIsFlushedOnCompletion();
+    void test_streamingMarkupIsFlushedOnCancel();
+    void test_streamingMarkupMatchesFullTextBeforeThrottle();
+    void test_streamingMarkupMatchesFullTextAfterThrottle();
+    void test_streamingMarkupIsByteIdenticalToSafeMarkdownOfFullText();
 };
 
 TestChat::TestChat(QObject* parent) : QObject(parent) {
@@ -520,7 +527,8 @@ void TestChat::test_streamingMarkupSanitisesLiveAnswer() {
     fake->lastAnswer()->appendChunk(QStringLiteral("**bold** <img src=x>"));
 
     // The raw streaming text is kept for tests/telemetry, while the display
-    // property is the sanitised Markdown the streaming tail renders.
+    // property is the sanitised Markdown the streaming tail renders. The value is
+    // computed lazily on read, so reading it never waits for a timer.
     QCOMPARE(chat.streamingText(), QStringLiteral("**bold** <img src=x>"));
     const QString kMarkup = chat.streamingMarkup();
     QVERIFY(kMarkup.contains(QStringLiteral("**bold**")));
@@ -545,22 +553,168 @@ void TestChat::test_markupRoleIsMemoisedAcrossReads() {
     QCOMPARE(chat.data(chat.index(1), Chat::kMarkupRole).toString(), kFirst);
 }
 
-void TestChat::test_streamingMarkupIsRecomputedOnlyWhenTextChanges() {
+void TestChat::test_streamingMarkupCoalescesChunksWithinThrottle() {
     auto provider = std::make_unique<FakeProvider>();
     FakeProvider* fake = provider.get();
     Chat chat(std::move(provider));
     chat.send(QStringLiteral("hi"));
+    // Non-const: QSignalSpy::wait() mutates the spy (used below to prove that a
+    // quiet window publishes nothing more).
+    QSignalSpy kMarkupSpy(&chat, &Chat::streamingMarkupChanged);
+
+    // A burst of chunks arrives synchronously, well inside one throttle window.
+    QString full;
+    for (int i = 0; i < 50; ++i) {
+        const QString kChunk = QStringLiteral("chunk-%1 ").arg(i);
+        full += kChunk;
+        fake->lastAnswer()->appendChunk(kChunk);
+    }
+
+    // The raw text keeps accumulating in full, but the sanitised markup is not
+    // republished per chunk - this is what removes the O(n^2) re-parse.
+    QCOMPARE(chat.streamingText(), full);
+    QCOMPARE(kMarkupSpy.count(), 0);
+
+    // The whole burst collapses into a single publication...
+    QVERIFY(kMarkupSpy.wait());
+    QCOMPARE(kMarkupSpy.count(), 1);
+    QCOMPARE(chat.streamingMarkup(), SafeMarkdown(full).text());
+
+    // ...and a second window with no new text publishes nothing more.
+    QVERIFY(!kMarkupSpy.wait(2 * Chat::kStreamingMarkupThrottleMs));
+    QCOMPARE(kMarkupSpy.count(), 1);
+}
+
+void TestChat::test_streamingMarkupRepublishesForLaterChunks() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    // Non-const: QSignalSpy::wait() mutates the spy.
+    QSignalSpy kMarkupSpy(&chat, &Chat::streamingMarkupChanged);
     fake->lastAnswer()->appendChunk(QStringLiteral("**bold**"));
 
+    // The first window publishes once...
+    QVERIFY(kMarkupSpy.wait());
+    QCOMPARE(kMarkupSpy.count(), 1);
+    // ...and the value reflects the whole accumulated text, sanitised.
     const QString kFirst = chat.streamingMarkup();
-    // Repeated reads of the same live text return the memoised value.
-    QCOMPARE(chat.streamingMarkup(), kFirst);
-    QVERIFY(chat.streamingMarkup().contains(QStringLiteral("**bold**")));
+    QVERIFY(kFirst.contains(QStringLiteral("**bold**")));
 
-    // A new chunk invalidates the memo and is sanitised again.
+    // A later chunk schedules its own window and publishes again, rather than
+    // being lost between ticks.
     fake->lastAnswer()->appendChunk(QStringLiteral(" <img src=x>"));
+    QVERIFY(kMarkupSpy.wait());
+    QCOMPARE(kMarkupSpy.count(), 2);
     QVERIFY(chat.streamingMarkup() != kFirst);
     QVERIFY(!hasUnescapedAngleBracket(chat.streamingMarkup()));
+}
+
+void TestChat::test_streamingMarkupIsFlushedOnCompletion() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    Answer* answer = fake->lastAnswer();
+    const QString kFull = QStringLiteral("**bold** <img src=x>");
+    answer->appendChunk(kFull);
+    const QSignalSpy kMarkupSpy(&chat, &Chat::streamingMarkupChanged);
+    // No event loop ran, so the throttle window has not elapsed.
+    QCOMPARE(kMarkupSpy.count(), 0);
+
+    answer->complete(Message(MessageRole::kAssistant, kFull));
+
+    // The terminal signal publishes synchronously, so no update is deferred past
+    // the end of the stream.
+    QCOMPARE(kMarkupSpy.count(), 1);
+    // The retained markup is SafeMarkdown(full text) and byte-identical to the
+    // frozen reply: there is no visual difference between the tail and the
+    // finished message.
+    QCOMPARE(chat.streamingMarkup(), SafeMarkdown(kFull).text());
+    QCOMPARE(chat.streamingMarkup(), chat.data(chat.index(1), Chat::kMarkupRole).toString());
+}
+
+void TestChat::test_streamingMarkupIsFlushedOnCancel() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    Answer* answer = fake->lastAnswer();
+    answer->appendChunk(QStringLiteral("partial"));
+    const QSignalSpy kMarkupSpy(&chat, &Chat::streamingMarkupChanged);
+
+    chat.cancel();
+
+    // Cancellation is a terminal signal too: pending markup is published now
+    // rather than on a later tick, and the raw text is no longer exposed.
+    QCOMPARE(kMarkupSpy.count(), 1);
+    QCOMPARE(chat.streamingMarkup(), SafeMarkdown(QStringLiteral("partial")).text());
+    QCOMPARE(chat.streamingText(), QString());
+}
+
+void TestChat::test_streamingMarkupMatchesFullTextBeforeThrottle() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    const QString kFull = QStringLiteral("A **bold** [link](https://example.com) `code` <i>x</i>");
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    fake->lastAnswer()->appendChunk(kFull.left(9));
+    fake->lastAnswer()->appendChunk(kFull.mid(9));
+
+    // Complete before any throttle tick: the finished markup is still exactly
+    // SafeMarkdown(full text), independent of when the timer would have fired.
+    fake->lastAnswer()->complete(Message(MessageRole::kAssistant, kFull));
+
+    QCOMPARE(chat.streamingMarkup(), SafeMarkdown(kFull).text());
+}
+
+void TestChat::test_streamingMarkupMatchesFullTextAfterThrottle() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    const QString kFull = QStringLiteral("A **bold** [link](https://example.com) `code` <i>x</i>");
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    // Non-const: QSignalSpy::wait() mutates the spy.
+    QSignalSpy kMarkupSpy(&chat, &Chat::streamingMarkupChanged);
+    fake->lastAnswer()->appendChunk(kFull.left(9));
+    fake->lastAnswer()->appendChunk(kFull.mid(9));
+
+    // Let the throttle publish mid-stream, then complete: the result is the
+    // same SafeMarkdown(full text), so the interval does not affect the output.
+    QVERIFY(kMarkupSpy.wait());
+    fake->lastAnswer()->complete(Message(MessageRole::kAssistant, kFull));
+
+    QCOMPARE(chat.streamingMarkup(), SafeMarkdown(kFull).text());
+}
+
+void TestChat::test_streamingMarkupIsByteIdenticalToSafeMarkdownOfFullText() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    Answer* answer = fake->lastAnswer();
+
+    // Markdown constructs that straddle chunk boundaries: a link and a code span
+    // opened in one chunk and closed in another. Only re-parsing the whole text
+    // can sanitise them, which is exactly what the throttle does.
+    const std::vector<QString> kChunks{
+            QStringLiteral("See ["),
+            QStringLiteral("the docs](ht"),
+            QStringLiteral("tps://example.com/x) and `co"),
+            QStringLiteral("de` plus <b>raw</b> and ![img](javascript:alert(1))"),
+    };
+    QString full;
+    for (const QString& chunk : kChunks) {
+        full += chunk;
+        answer->appendChunk(chunk);
+    }
+    answer->complete(Message(MessageRole::kAssistant, full));
+
+    // Regression guard: the throttled streaming result is byte-identical to
+    // sanitising the full text directly - no incremental parse, no drift.
+    const QString kExpected = SafeMarkdown(full).text();
+    QCOMPARE(chat.streamingMarkup(), kExpected);
+    QCOMPARE(chat.data(chat.index(1), Chat::kMarkupRole).toString(), kExpected);
 }
 
 // The chat model exposes sanitised Markdown (SafeMarkdown), which uses
