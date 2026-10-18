@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QObject>
 #include <QString>
+#include <QTimer>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -42,10 +43,20 @@ class Chat : public QAbstractListModel {
 
     Q_PROPERTY(QString providerId READ providerId CONSTANT)
     Q_PROPERTY(QString providerName READ providerName CONSTANT)
+    // Raw text of the in-flight reply. Transient: empty once the stream ends
+    // (the finished text then lives in the history as a Message).
     Q_PROPERTY(QString streamingText READ streamingText NOTIFY streamingTextChanged)
     // The live reply as sanitised Markdown, so the streaming tail renders it
     // through the same safety boundary as the finished message (SafeMarkdown).
-    Q_PROPERTY(QString streamingMarkup READ streamingMarkup NOTIFY streamingTextChanged)
+    // It is republished at most once per kStreamingMarkupThrottleMs (and always
+    // on a terminal signal), so a long stream never re-parses the whole
+    // accumulated text on every chunk.
+    //
+    // Unlike streamingText, this value is retained after the stream ends until
+    // the next send(): it then holds SafeMarkdown(full text), byte-identical to
+    // the finished message's `markup` role. A consumer that reads it outside the
+    // streaming window should gate on `streaming` (the conversation tail does).
+    Q_PROPERTY(QString streamingMarkup READ streamingMarkup NOTIFY streamingMarkupChanged)
     Q_PROPERTY(bool streaming READ isStreaming NOTIFY stateChanged)
     // Last failed request, presented to the user. Transient like streamingText:
     // an accepted send() starts a new request and clears it. Cancellation is not
@@ -66,6 +77,17 @@ public:
         // accessibility, so a screen reader never reads Markdown escapes.
         kMarkupRole,
     };
+
+    // The raw streaming text is appended per chunk (O(1)), but its sanitised
+    // Markdown is republished to QML at most once per this window (and always on
+    // a terminal signal). Republishing on every chunk would re-parse the whole
+    // accumulated text each time - O(n^2) over a reply - on the GUI thread.
+    //
+    // 80 ms is a product trade-off, not a protocol constant: about 12 updates per
+    // second, i.e. several 60 Hz frames between republishes. Fast enough for the
+    // live tail to feel continuous, slow enough for a burst of small SSE chunks
+    // to collapse into one whole-text parse.
+    static constexpr int kStreamingMarkupThrottleMs = 80;
 
     // Takes ownership of the provider. The provider must not be null.
     explicit Chat(std::unique_ptr<Provider> provider, QObject* parent = nullptr);
@@ -95,6 +117,10 @@ public:
 
 signals:
     void streamingTextChanged();
+    // Emitted when the sanitised live markup is republished: at most once per
+    // kStreamingMarkupThrottleMs while streaming, and synchronously on a
+    // terminal signal.
+    void streamingMarkupChanged();
     void stateChanged();
     void errorTextChanged();
     void replyReceived(const Message& message);
@@ -112,8 +138,20 @@ private:
 
     void appendMessage(const Message& message);
     void startStreaming();
+    // Disconnects the in-flight Answer (if any) and finishes the stream.
     void stopStreaming();
-    void setStreamingText(const QString& text);
+    // Terminal flush and reset of the in-flight view state. Split from
+    // stopStreaming() so the destroyed path, which has already cleared
+    // currentAnswer_, does not run the disconnect guard.
+    void finishStreaming();
+    void setStreamingMarkup(const QString& markup);
+    // Arm the throttle if a change is pending and none is scheduled. Kept
+    // separate so the scheduling rule lives in one place.
+    void scheduleMarkupPublish();
+    // Notify QML that the live markup must be re-read. Called by the throttle
+    // timer and, unconditionally, on a terminal signal. The recomputation itself
+    // is lazy (streamingMarkup()), preserving headless usage without a GUI.
+    void publishStreamingMarkup();
     void setStreaming(bool streaming);
     // The failure state is explicit rather than derived from errorText_, so an
     // error with an empty presentation text still counts as an error.
@@ -133,11 +171,28 @@ private:
     // lays out; without the cache every query would re-parse the message. Filled
     // lazily so a headless consumer that never asks for markup never pays for it.
     mutable std::vector<std::optional<QString>> markupCache_;
+    // Raw text of the in-flight reply. It keeps accumulating per chunk and is
+    // retained after the stream ends (streamingText() hides it once not
+    // streaming) so the finished reply's markup stays available.
     QString streamingText_;
-    // Memoised streaming markup: recomputed only when the live text changes, so a
-    // view that reads the property several times per chunk sanitises once.
+    // Sanitised Markdown of the live reply, computed lazily on the first read
+    // after a change and memoised. Only the notification that drives a view to
+    // read is throttled, so the O(n^2) re-parse happens at the notification
+    // cadence, not per chunk. On completion the cache holds exactly the bytes the
+    // finished message renders, so the live tail and the frozen reply never
+    // differ.
     mutable QString streamingMarkupCache_;
+    // True when the cache no longer reflects streamingText_ and must be
+    // recomputed on the next read.
     mutable bool streamingMarkupDirty_ = false;
+    // True while a markup notification is owed for the current text; cleared as
+    // soon as it is emitted, so the signal never fires again without a new
+    // version (independent of whether anyone has read the value yet).
+    bool markupPublishPending_ = false;
+    // Single-shot throttle: it is (re)armed only while idle, so a continuous
+    // stream publishes at the fixed cadence instead of being debounced to
+    // silence.
+    QTimer markupThrottle_;
     QString errorText_;
     bool hasError_ = false;
     bool isStreaming_ = false;

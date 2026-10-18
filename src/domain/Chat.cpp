@@ -39,6 +39,12 @@ std::optional<QString> failureText(ProviderError error, const QString& detail) {
 Chat::Chat(std::unique_ptr<Provider> provider, QObject* parent)
     : QAbstractListModel(parent), provider_(std::move(provider)) {
     Q_ASSERT(provider_ != nullptr);
+    // One publish per window: the timer is restarted only after it fired, never
+    // on every chunk, so a continuous stream still updates at the fixed rate
+    // instead of being debounced into silence.
+    markupThrottle_.setSingleShot(true);
+    markupThrottle_.setInterval(kStreamingMarkupThrottleMs);
+    connect(&markupThrottle_, &QTimer::timeout, this, &Chat::publishStreamingMarkup);
 }
 
 Chat::~Chat() {
@@ -94,13 +100,18 @@ const std::vector<Message>& Chat::messages() const noexcept {
 }
 
 QString Chat::streamingText() const {
-    return streamingText_;
+    // The raw reply is exposed only while it is in flight; once the stream ends
+    // the finished text lives on as a Message in the history, and the retained
+    // copy here only feeds the markup source.
+    return isStreaming_ ? streamingText_ : QString();
 }
 
 QString Chat::streamingMarkup() const {
     if (streamingMarkupDirty_) {
         // The live reply is assistant content too: sanitise it so the streaming
         // tail is rendered through the same boundary as the finished message.
+        // Recomputation is lazy (and thus needs no GUI unless a consumer reads
+        // markup) and happens at most once per throttled notification.
         streamingMarkupCache_ = SafeMarkdown(streamingText_).text();
         streamingMarkupDirty_ = false;
     }
@@ -188,6 +199,10 @@ void Chat::startStreaming() {
     connect(answer, &Answer::failed, this, &Chat::onAnswerFailed);
     connect(answer, &Answer::cancelled, this, &Chat::onAnswerCancelled);
     connect(answer, &QObject::destroyed, this, &Chat::onAnswerDestroyed);
+    // A new reply starts from a clean slate: the previous reply's text and its
+    // (retained) markup must not leak into the new streaming tail.
+    streamingText_.clear();
+    setStreamingMarkup(QString());
     setStreaming(true);
 }
 
@@ -196,18 +211,55 @@ void Chat::stopStreaming() {
         disconnect(currentAnswer_, nullptr, this, nullptr);
         currentAnswer_ = nullptr;
     }
-    setStreamingText(QString());
-    setStreaming(false);
+    finishStreaming();
 }
 
-void Chat::setStreamingText(const QString& text) {
-    if (streamingText_ == text) {
+void Chat::finishStreaming() {
+    // Terminal flush: an update still pending is published now rather than on
+    // the next throttle tick, so no markup update is deferred past the end of the
+    // stream. streamingText_ is kept as the sanitisation source: the lazy
+    // getter then exposes exactly SafeMarkdown(full text), byte-identical to the
+    // finished message that replaces the tail.
+    markupThrottle_.stop();
+    if (isStreaming_ && markupPublishPending_) {
+        markupPublishPending_ = false;
+        emit streamingMarkupChanged();
+    }
+    // streamingText() hides the retained raw text once the stream is over; signal
+    // the transition only if the text was actually exposed.
+    const bool kExposedText = isStreaming_ && !streamingText_.isEmpty();
+    setStreaming(false);
+    if (kExposedText) {
+        emit streamingTextChanged();
+    }
+}
+
+void Chat::setStreamingMarkup(const QString& markup) {
+    streamingMarkupDirty_ = false;
+    markupPublishPending_ = false;
+    if (streamingMarkupCache_ == markup) {
         return;
     }
-    streamingText_ = text;
-    // Invalidate the memoised markup; it is recomputed on the next read.
-    streamingMarkupDirty_ = true;
-    emit streamingTextChanged();
+    streamingMarkupCache_ = markup;
+    emit streamingMarkupChanged();
+}
+
+void Chat::scheduleMarkupPublish() {
+    if (markupPublishPending_ && !streamingText_.isEmpty() && !markupThrottle_.isActive()) {
+        markupThrottle_.start();
+    }
+}
+
+void Chat::publishStreamingMarkup() {
+    // Only the notification is throttled; the (potentially expensive) whole-text
+    // sanitisation stays lazy in streamingMarkup(). Keeping it out of the timer
+    // also means a headless Chat that never reads markup never needs a
+    // QGuiApplication (SafeMarkdown uses QTextDocument).
+    if (!markupPublishPending_) {
+        return;
+    }
+    markupPublishPending_ = false;
+    emit streamingMarkupChanged();
 }
 
 void Chat::setStreaming(bool streaming) {
@@ -234,7 +286,18 @@ void Chat::clearError() {
 }
 
 void Chat::onChunkReceived(const QString& chunk) {
-    setStreamingText(streamingText_ + chunk);
+    if (chunk.isEmpty()) {
+        return;
+    }
+    // O(1) amortised append: the accumulated reply is never rebuilt through
+    // operator+ per chunk, so raw accumulation stays linear over the stream.
+    streamingText_.append(chunk);
+    // The raw text is always current; the sanitised view is recomputed lazily and
+    // is only advertised to QML at the throttled cadence.
+    emit streamingTextChanged();
+    streamingMarkupDirty_ = true;
+    markupPublishPending_ = true;
+    scheduleMarkupPublish();
 }
 
 void Chat::onAnswerCompleted(const Message& message) {
@@ -259,8 +322,8 @@ void Chat::onAnswerCancelled() {
 void Chat::onAnswerDestroyed() {
     // The provider destroyed its Answer without a terminal signal. The bare
     // observing pointer is cleared here, synchronously with destruction, so it
-    // can never dangle.
+    // can never dangle; finishStreaming() then flushes and clears the tail
+    // without re-running the disconnect guard.
     currentAnswer_ = nullptr;
-    setStreamingText(QString());
-    setStreaming(false);
+    finishStreaming();
 }
