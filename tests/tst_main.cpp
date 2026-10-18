@@ -1,3 +1,4 @@
+#include <QFile>
 #include <QGuiApplication>
 #include <QMetaObject>
 #include <QObject>
@@ -5,6 +6,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QString>
+#include <QTemporaryDir>
 #include <QUrl>
 #include <QVariant>
 #include <QtTest>
@@ -17,7 +19,9 @@
 #include "domain/Chats.h"
 #include "domain/Message.h"
 #include "domain/NewChat.h"
+#include "domain/ProviderConfigFile.h"
 #include "domain/ProviderOffer.h"
+#include "domain/ProviderSettings.h"
 #include "domain/Providers.h"
 
 namespace {
@@ -43,13 +47,25 @@ QObject* findInItems(QQuickItem* root, const QString& name) {
     return nullptr;
 }
 
+// Reads a UTF-8 text file for assertions; returns a null QString when the file
+// cannot be opened, which fails the following comparison.
+[[nodiscard]] QString readTextFile(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+    return QString::fromUtf8(file.readAll());
+}
+
 // Everything a QML run needs, composed exactly as main() does it: a provider
 // list, a chat grid and the thin invokable that joins them. The provider is a
 // fake, so the test acts as the network and no real request is ever made.
 class Harness {
 public:
     Harness()
-        : providers_({ProviderOffer(QStringLiteral("fake"),
+        : configFile_(temporaryDirectory_.filePath(QStringLiteral("provider.env"))),
+          settings_({}, {}, configFile_),
+          providers_({ProviderOffer(QStringLiteral("fake"),
                                     QStringLiteral("Fake Provider"),
                                     [this] {
                                         auto provider = std::make_unique<FakeProvider>(QStringLiteral("fake"),
@@ -62,6 +78,7 @@ public:
                 {QStringLiteral("chats"), QVariant::fromValue(&chats_)},
                 {QStringLiteral("providers"), QVariant::fromValue(&providers_)},
                 {QStringLiteral("newChat"), QVariant::fromValue(&newChat_)},
+                {QStringLiteral("providerSettings"), QVariant::fromValue(&settings_)},
         });
         engine_.load(QUrl(QStringLiteral("qrc:/qt/qml/AudioAssistant/Main.qml")));
         // A delegate is only instantiated once the window is shown and polished;
@@ -78,6 +95,12 @@ public:
     [[nodiscard]] NewChat& newChat() noexcept {
         return newChat_;
     }
+    [[nodiscard]] ProviderSettings& settings() noexcept {
+        return settings_;
+    }
+    [[nodiscard]] const ProviderConfigFile& configFile() const noexcept {
+        return configFile_;
+    }
     [[nodiscard]] const std::vector<FakeProvider*>& minted() const noexcept {
         return minted_;
     }
@@ -91,6 +114,9 @@ private:
         return qobject_cast<QQuickWindow*>(root());
     }
 
+    QTemporaryDir temporaryDirectory_;
+    ProviderConfigFile configFile_;
+    ProviderSettings settings_;
     std::vector<FakeProvider*> minted_;
     Providers providers_;
     Chats chats_;
@@ -122,6 +148,9 @@ private slots:
     void test_addChatButtonCreatesAChat();
     void test_sendButtonForwardsTypedTextToTheChat();
     void test_streamingTailShowsTheLiveReply();
+    void test_providerSettingsFieldsAreBound();
+    void test_apiKeyFieldIsMasked();
+    void test_saveButtonPersistsProviderSettings();
 };
 
 TestQmlChat::TestQmlChat(QObject* parent) : QObject(parent) {
@@ -187,6 +216,85 @@ void TestQmlChat::test_streamingTailShowsTheLiveReply() {
     harness.minted().at(0)->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("Hello")));
     QCOMPARE(chat->rowCount(), 2);
     QCOMPARE(chat->streamingText(), QString());
+}
+
+void TestQmlChat::test_providerSettingsFieldsAreBound() {
+    Harness harness;
+    QVERIFY(harness.settings().save(QStringLiteral("https://bound.test/v1"), QStringLiteral("bound-model"), QString()));
+    QCoreApplication::processEvents();
+
+    QObject* baseUrlField = harness.child(QStringLiteral("providerBaseUrlField"));
+    QObject* modelField = harness.child(QStringLiteral("providerModelField"));
+    QObject* apiKeyField = harness.child(QStringLiteral("providerApiKeyField"));
+    QVERIFY(baseUrlField != nullptr);
+    QVERIFY(modelField != nullptr);
+    QVERIFY(apiKeyField != nullptr);
+
+    QCOMPARE(baseUrlField->property("text").toString(), QStringLiteral("https://bound.test/v1"));
+    QCOMPARE(modelField->property("text").toString(), QStringLiteral("bound-model"));
+    // The key is write-only: the field never renders the stored secret back.
+    QCOMPARE(apiKeyField->property("text").toString(), QString());
+}
+
+void TestQmlChat::test_apiKeyFieldIsMasked() {
+    Harness harness;
+    QVERIFY(harness.settings().save(
+            QStringLiteral("https://mask.test/v1"), QStringLiteral("mask-model"), QStringLiteral("secret-key")));
+    QCoreApplication::processEvents();
+
+    QObject* apiKeyField = harness.child(QStringLiteral("providerApiKeyField"));
+    QVERIFY(apiKeyField != nullptr);
+
+    // Masked input. QQuickTextInput is a private class, so its Password echo
+    // mode is pinned numerically here.
+    QCOMPARE(apiKeyField->property("echoMode").toInt(), 2);
+
+    // Write-only contract: the secret is not a readable QML property; only the
+    // boolean "configured" state is exposed, and the stored key is not rendered
+    // back into the field.
+    const QMetaObject* kSettingsMeta = harness.settings().metaObject();
+    QCOMPARE(kSettingsMeta->indexOfProperty("apiKey"), -1);
+    QVERIFY(kSettingsMeta->indexOfProperty("isKeyConfigured") >= 0);
+    QCOMPARE(apiKeyField->property("text").toString(), QString());
+    QVERIFY(harness.settings().isKeyConfigured());
+}
+
+void TestQmlChat::test_saveButtonPersistsProviderSettings() {
+    Harness harness;
+    QCoreApplication::processEvents();
+
+    QObject* baseUrlField = harness.child(QStringLiteral("providerBaseUrlField"));
+    QObject* modelField = harness.child(QStringLiteral("providerModelField"));
+    QObject* apiKeyField = harness.child(QStringLiteral("providerApiKeyField"));
+    QObject* saveButton = harness.child(QStringLiteral("saveProviderSettingsButton"));
+    QVERIFY(baseUrlField != nullptr);
+    QVERIFY(modelField != nullptr);
+    QVERIFY(apiKeyField != nullptr);
+    QVERIFY(saveButton != nullptr);
+
+    // The form holds a local draft; the key is write-only and reaches C++ only
+    // when the save command is invoked.
+    QVERIFY(baseUrlField->setProperty("text", QStringLiteral("https://panel.test/v1")));
+    QVERIFY(modelField->setProperty("text", QStringLiteral("panel-model")));
+    QVERIFY(apiKeyField->setProperty("text", QStringLiteral("panel-secret")));
+    QVERIFY(QMetaObject::invokeMethod(saveButton, "clicked"));
+
+    // A failed save leaves the reason in lastError; assert it before reading the
+    // file so a failure points at the cause, not at a missing file.
+    QVERIFY(harness.settings().lastError().isEmpty());
+    QCOMPARE(harness.settings().baseUrl(), QStringLiteral("https://panel.test/v1"));
+    QCOMPARE(harness.settings().model(), QStringLiteral("panel-model"));
+    QCOMPARE(harness.settings().apiKey(), QStringLiteral("panel-secret"));
+    QVERIFY(harness.settings().isKeyConfigured());
+    // The key field is cleared after a successful save: the secret lives only in
+    // the C++ session, not in the view.
+    QCOMPARE(apiKeyField->property("text").toString(), QString());
+
+    const QString kText = readTextFile(harness.configFile().path());
+    QVERIFY(kText.contains(QStringLiteral("POLZA_BASE_URL=https://panel.test/v1")));
+    QVERIFY(kText.contains(QStringLiteral("POLZA_MODEL=panel-model")));
+    QVERIFY(!kText.contains(QStringLiteral("panel-secret")));
+    QVERIFY(!kText.contains(QStringLiteral("POLZA_API_KEY")));
 }
 
 QTEST_MAIN(TestQmlChat)

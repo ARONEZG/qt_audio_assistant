@@ -322,7 +322,11 @@ add_library(audio-assistant-domain STATIC
     src/domain/Message.cpp
     src/domain/NewChat.cpp
     src/domain/Provider.cpp
+    src/domain/ProviderConfig.cpp
+    src/domain/ProviderConfigFile.cpp
+    src/domain/ProviderConfigSource.cpp
     src/domain/ProviderOffer.cpp
+    src/domain/ProviderSettings.cpp
     src/domain/Providers.cpp
 )
 
@@ -364,6 +368,7 @@ set(_audio_assistant_qml_files
     qml/ConversationView.qml
     qml/ChatPanel.qml
     qml/ProviderSelector.qml
+    qml/ProviderSettingsPanel.qml
     qml/ChatGrid.qml
 )
 
@@ -474,6 +479,9 @@ audio_assistant_add_domain_test(tst_newchat
     tests/FakeProvider.cpp
     tests/FakeProvider.h
 )
+audio_assistant_add_domain_test(tst_provider_config
+    tests/tst_provider_config.cpp
+)
 audio_assistant_add_domain_test(tst_placeholderprovider
     tests/tst_placeholderprovider.cpp
     src/app/PlaceholderProvider.cpp
@@ -508,6 +516,38 @@ target_link_libraries(tst_openai_provider PRIVATE
 
 add_test(NAME tst_openai_provider COMMAND tst_openai_provider)
 set_tests_properties(tst_openai_provider PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── Provider settings test ──────────────────────────────────
+# Covers the persisted configuration object and the composition guarantee that
+# a chat is minted from the latest saved endpoint/model/key. It talks to the
+# same in-process mock endpoint as the provider test, so no real network is
+# involved.
+qt_add_executable(tst_provider_settings
+    tests/tst_provider_settings.cpp
+    tests/OpenAiMockServer.cpp
+    tests/OpenAiMockServer.h
+    src/app/OpenAiCompatibleProvider.cpp
+)
+
+set_target_properties(tst_provider_settings PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_provider_settings PRIVATE
+    audio-assistant-strict
+    audio-assistant-qt-warnings
+    audio-assistant-domain
+    Qt6::Core
+    Qt6::Network
+    Qt6::Concurrent
+    Qt6::Test
+    LLMQore::LLMQore
+)
+
+add_test(NAME tst_provider_settings COMMAND tst_provider_settings)
+set_tests_properties(tst_provider_settings PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
