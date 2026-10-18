@@ -2,7 +2,6 @@
 #include <QGuiApplication>
 #include <QMetaObject>
 #include <QObject>
-#include <QPointer>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -232,11 +231,12 @@ private slots:
     void test_chatFailureShowsTheError();
     void test_backgroundCaptureToggleStartsOff();
     void test_backgroundCaptureToggleUpdatesTheChat();
-    void test_providerSelectionRebuildsTheChat();
+    void test_backgroundCaptureToggleStaysInSyncAfterUserToggle();
+    void test_providerSelectionSwitchesTheOpenChat();
     void test_providerSettingsFieldsAreBound();
     void test_apiKeyFieldIsMasked();
     void test_saveButtonPersistsProviderSettings();
-    void test_saveButtonRebuildsTheChat();
+    void test_saveButtonAppliesWithoutLosingHistory();
 };
 
 TestQmlChat::TestQmlChat(QObject* parent) : QObject(parent) {
@@ -503,28 +503,45 @@ void TestQmlChat::test_backgroundCaptureToggleUpdatesTheChat() {
     QCOMPARE(toggle->property("checked").toBool(), true);
 }
 
-void TestQmlChat::test_providerSelectionRebuildsTheChat() {
+void TestQmlChat::test_backgroundCaptureToggleStaysInSyncAfterUserToggle() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    QObject* toggle = harness.child(QStringLiteral("backgroundCaptureToggle"));
+    QVERIFY(toggle != nullptr);
+
+    // The user switches it on ...
+    QVERIFY(QMetaObject::invokeMethod(toggle, "toggle"));
+    QCOMPARE(harness.chats().at(0)->isBackgroundCaptureEnabled(), true);
+
+    // ... and a later change from C++ still reaches the control: the two-way
+    // Binding survives the control's own write (an inline `checked:` binding
+    // would have been destroyed by it).
+    harness.chats().at(0)->setBackgroundCaptureEnabled(false);
+    QCoreApplication::processEvents();
+    QCOMPARE(toggle->property("checked").toBool(), false);
+}
+
+void TestQmlChat::test_providerSelectionSwitchesTheOpenChat() {
     Harness harness;
     QCoreApplication::processEvents();
     QVERIFY(openSettingsDialog(harness) != nullptr);
     QObject* picker = harness.child(QStringLiteral("providerPicker"));
     QVERIFY(picker != nullptr);
 
-    const QPointer<Chat> kBefore(harness.chats().at(0));
+    Chat* chat = harness.chats().at(0);
+    chat->send(QStringLiteral("hi"));
+    harness.minted().at(0)->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("hello")));
     const std::size_t kMintedBefore = harness.minted().size();
 
-    // Selecting a provider applies it: the single chat is rebuilt from a freshly
-    // minted provider and the previous chat is dropped.
+    // Selecting a provider applies it to the open chat: the same chat object, a
+    // freshly minted provider, and the conversation kept.
     QVERIFY(QMetaObject::invokeMethod(picker, "activated", Q_ARG(int, 0)));
     QCoreApplication::processEvents();
 
-    // The previous chat is destroyed and a new one (with a newly minted provider)
-    // takes its place. QPointer survives allocator address reuse, unlike a raw
-    // pointer comparison.
-    QVERIFY(kBefore.isNull());
     QCOMPARE(harness.chats().count(), 1);
-    QVERIFY(harness.chats().at(0) != nullptr);
+    QCOMPARE(harness.chats().at(0), chat);
     QCOMPARE(harness.minted().size(), kMintedBefore + 1);
+    QCOMPARE(chat->messages().size(), std::size_t{2});
 }
 
 void TestQmlChat::test_providerSettingsFieldsAreBound() {
@@ -609,7 +626,7 @@ void TestQmlChat::test_saveButtonPersistsProviderSettings() {
     QVERIFY(!kText.contains(QStringLiteral("POLZA_API_KEY")));
 }
 
-void TestQmlChat::test_saveButtonRebuildsTheChat() {
+void TestQmlChat::test_saveButtonAppliesWithoutLosingHistory() {
     Harness harness;
     QCoreApplication::processEvents();
     QVERIFY(openSettingsDialog(harness) != nullptr);
@@ -621,18 +638,23 @@ void TestQmlChat::test_saveButtonRebuildsTheChat() {
     QVERIFY(modelField != nullptr);
     QVERIFY(saveButton != nullptr);
 
-    const QPointer<Chat> kBefore(harness.chats().at(0));
-    QVERIFY(baseUrlField->setProperty("text", QStringLiteral("https://rebuild.test/v1")));
-    QVERIFY(modelField->setProperty("text", QStringLiteral("rebuild-model")));
+    Chat* chat = harness.chats().at(0);
+    chat->send(QStringLiteral("hi"));
+    harness.minted().at(0)->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("hello")));
+    const std::size_t kMintedBefore = harness.minted().size();
+
+    QVERIFY(baseUrlField->setProperty("text", QStringLiteral("https://apply.test/v1")));
+    QVERIFY(modelField->setProperty("text", QStringLiteral("apply-model")));
     QVERIFY(QMetaObject::invokeMethod(saveButton, "clicked"));
     QCoreApplication::processEvents();
 
-    // The saved endpoint/model reaches the open chat at once: it is rebuilt with a
-    // freshly minted provider (the previous chat is dropped).
-    QCOMPARE(harness.settings().baseUrl(), QStringLiteral("https://rebuild.test/v1"));
-    QVERIFY(kBefore.isNull());
+    // The saved endpoint/model is applied to the open chat at once (a fresh
+    // provider is minted) without losing the conversation.
+    QCOMPARE(harness.settings().baseUrl(), QStringLiteral("https://apply.test/v1"));
     QCOMPARE(harness.chats().count(), 1);
-    QVERIFY(harness.chats().at(0) != nullptr);
+    QCOMPARE(harness.chats().at(0), chat);
+    QCOMPARE(harness.minted().size(), kMintedBefore + 1);
+    QCOMPARE(chat->messages().size(), std::size_t{2});
 }
 
 QTEST_MAIN(TestQmlChat)

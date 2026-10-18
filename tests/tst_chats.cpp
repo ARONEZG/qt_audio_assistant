@@ -1,4 +1,3 @@
-#include <QAbstractItemModel>
 #include <QByteArray>
 #include <QModelIndex>
 #include <QObject>
@@ -59,8 +58,6 @@ private slots:
     void test_removeDropsTheChat();
     void test_removeDestroysTheChat();
     void test_removeOutOfRangeIsNoOp();
-    void test_clearRemovesEveryChat();
-    void test_clearOnEmptyCollectionIsNoOp();
     void test_modelExposesTheChatOfARow();
     void test_modelRejectsUnknownRole();
     void test_modelRejectsInvalidIndex();
@@ -203,40 +200,6 @@ void TestChats::test_removeOutOfRangeIsNoOp() {
 
     QCOMPARE(chats.count(), 1);
     QCOMPARE(kRemovedSpy.count(), 0);
-}
-
-// Switching the provider of the single open chat drops the previous chat as a
-// whole: every row is removed, the model is reset and the chats are destroyed.
-void TestChats::test_clearRemovesEveryChat() {
-    const Providers kProviders({offerOf(QStringLiteral("alpha"), QStringLiteral("Alpha")),
-                                offerOf(QStringLiteral("beta"), QStringLiteral("Beta"))});
-    Chats chats;
-    Chat* first = chats.add(kProviders.fresh(QStringLiteral("alpha")));
-    QVERIFY(first != nullptr);
-    QVERIFY(chats.add(kProviders.fresh(QStringLiteral("beta"))) != nullptr);
-    const QSignalSpy kResetSpy(&chats, &QAbstractItemModel::modelReset);
-    const QSignalSpy kCountSpy(&chats, &Chats::countChanged);
-    const QSignalSpy kDestroyedSpy(first, &QObject::destroyed);
-
-    chats.clear();
-
-    QCOMPARE(chats.count(), 0);
-    QCOMPARE(chats.rowCount(), 0);
-    QCOMPARE(kResetSpy.count(), 1);
-    QCOMPARE(kCountSpy.count(), 1);
-    QCOMPARE(kDestroyedSpy.count(), 1);
-}
-
-void TestChats::test_clearOnEmptyCollectionIsNoOp() {
-    Chats chats;
-    const QSignalSpy kResetSpy(&chats, &QAbstractItemModel::modelReset);
-    const QSignalSpy kCountSpy(&chats, &Chats::countChanged);
-
-    chats.clear();
-
-    QCOMPARE(chats.count(), 0);
-    QCOMPARE(kResetSpy.count(), 0);
-    QCOMPARE(kCountSpy.count(), 0);
 }
 
 void TestChats::test_modelExposesTheChatOfARow() {

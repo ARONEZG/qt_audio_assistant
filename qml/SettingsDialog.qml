@@ -10,8 +10,9 @@ import AudioAssistant
 // Public API: `providers` and `settings` (injected by the composition root) and
 // the `providerApplied(providerId)` signal. The dialog owns no chat state: it reports
 // the one intent - "apply this provider's configuration" - which the
-// composition root turns into a rebuild of the single open chat. It is emitted
-// when the provider selection changes and when the settings form is saved.
+// composition root turns into a provider swap on the open chat (keeping its
+// conversation). It is emitted when the provider selection changes and when the
+// settings form is saved.
 Dialog {
     id: root
 
@@ -33,8 +34,9 @@ Dialog {
     // Sized to fit the provider picker and the settings form (including its error
     // line) without clipping.
     height: 420
-    x: (parent.width - width) / 2
-    y: (parent.height - height) / 2
+    // Dialog is a popup, not an item; its anchors group is the supported way to
+    // centre it over the window.
+    anchors.centerIn: parent
     standardButtons: Dialog.Close
 
     // A saved endpoint/model/key must take effect immediately, so applying it

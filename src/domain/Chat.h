@@ -17,8 +17,9 @@
 #include "domain/Message.h"
 #include "domain/Provider.h"
 
-// One chat. It owns its provider (dependency injected through the constructor)
-// and keeps an append-only history of finished messages. The
+// One chat. It owns its provider (dependency injected through the constructor;
+// replaceable later with setProvider) and keeps an append-only history of
+// finished messages. The
 // in-flight answer never touches the history: it lives in streamingText() until
 // the provider completes it, at which point it is frozen into a Message.
 //
@@ -41,8 +42,10 @@ class Chat : public QAbstractListModel {
     QML_ELEMENT
     QML_UNCREATABLE("Chats creates chats from a provider")
 
-    Q_PROPERTY(QString providerId READ providerId CONSTANT)
-    Q_PROPERTY(QString providerName READ providerName CONSTANT)
+    // The chat's provider can be replaced at runtime (setProvider), so its
+    // identity is not constant: switching provider keeps the conversation.
+    Q_PROPERTY(QString providerId READ providerId NOTIFY providerChanged)
+    Q_PROPERTY(QString providerName READ providerName NOTIFY providerChanged)
     // Raw text of the in-flight reply. Transient: empty once the stream ends
     // (the finished text then lives in the history as a Message).
     Q_PROPERTY(QString streamingText READ streamingText NOTIFY streamingTextChanged)
@@ -68,6 +71,7 @@ class Chat : public QAbstractListModel {
     // state) because the intended wiring is for the chat to drive a capture
     // source feeding a ring buffer and to drain that buffer on demand; keeping
     // the switch here means the future logic already reads the right owner.
+    // The real wiring is tracked separately (see issue #34).
     Q_PROPERTY(bool backgroundCaptureEnabled READ isBackgroundCaptureEnabled WRITE setBackgroundCaptureEnabled NOTIFY
                        backgroundCaptureChanged)
 
@@ -99,6 +103,13 @@ public:
     // Takes ownership of the provider. The provider must not be null.
     explicit Chat(std::unique_ptr<Provider> provider, QObject* parent = nullptr);
     ~Chat() override;
+
+    // Replaces the provider with a freshly minted one, keeping the conversation
+    // and the model rows untouched. Any in-flight answer is abandoned first - its
+    // Answer belongs to the provider being replaced. The provider must not be
+    // null. Used when the user switches provider or saves new settings: the chat
+    // continues with the new backend instead of losing its history.
+    void setProvider(std::unique_ptr<Provider> provider);
 
     [[nodiscard]] int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     [[nodiscard]] QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
@@ -132,6 +143,8 @@ signals:
     void streamingMarkupChanged();
     void stateChanged();
     void errorTextChanged();
+    // Emitted when the provider identity changes (setProvider).
+    void providerChanged();
     // Emitted only when the background-capture switch actually changes value.
     void backgroundCaptureChanged();
     void replyReceived(const Message& message);

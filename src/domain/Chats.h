@@ -15,7 +15,7 @@
 // The collection of open chats. It is a data object: it owns the chats it was
 // given and exposes them row by row, but it never talks to a provider's network,
 // never decides when a chat sends, and holds no static state. A view binds to it
-// and calls add()/remove()/clear().
+// and calls add()/remove().
 //
 // The application opens a single chat; the collection type still models several
 // so the single-chat UI can be widened later without a new model.
@@ -65,11 +65,6 @@ public:
     // Removes and destroys the chat at index. Returns false when the index is
     // out of range - removing nothing is a no-op, not an error.
     bool remove(int index);
-    // Removes and destroys every chat. Used when the provider of the single open
-    // chat is switched: the previous chat (and its history) is dropped as a
-    // whole rather than left behind invisibly. Clearing an already empty
-    // collection is a no-op that emits nothing.
-    Q_INVOKABLE void clear();
 
 signals:
     void countChanged();

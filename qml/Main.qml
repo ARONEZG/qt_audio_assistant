@@ -70,12 +70,9 @@ ApplicationWindow {
         providers: window.providers
         settings: window.providerSettings
 
-        // Switching the provider or saving the endpoint/model/key rebuilds the
-        // single open chat, so the new configuration takes effect immediately.
-        // The previous chat (and its history) is dropped as a whole.
-        onProviderApplied: providerId => {
-            window.chats.clear();
-            window.newChat.open(providerId);
-        }
+        // Switching the provider or saving the endpoint/model/key applies the
+        // new provider to the open chat, keeping its conversation: the chat
+        // continues with the new backend instead of starting over.
+        onProviderApplied: providerId => window.newChat.open(providerId)
     }
 }

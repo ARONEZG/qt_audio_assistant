@@ -81,26 +81,6 @@ bool Chats::remove(int index) {
     return true;
 }
 
-void Chats::clear() {
-    if (chats_.empty()) {
-        return;
-    }
-    // A wholesale replacement of the model's contents: a reset is the correct
-    // notification (no per-row bookkeeping) and a bound view rebuilds from the
-    // empty state.
-    //
-    // The chats themselves are moved aside and destroyed only after
-    // endResetModel(): a QML view holds each chat as a delegate property, and
-    // destroying it before the view has been told to drop its delegates would
-    // leave those delegates reading a dangling object. The swap keeps the chats
-    // alive through the reset and releases them once the view has rebuilt.
-    std::vector<std::unique_ptr<Chat>> doomed;
-    beginResetModel();
-    doomed.swap(chats_);
-    endResetModel();
-    emit countChanged();
-}
-
 bool Chats::isValidRow(int index) const noexcept {
     return index >= 0 && index < count();
 }

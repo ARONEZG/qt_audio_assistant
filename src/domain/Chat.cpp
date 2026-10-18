@@ -55,6 +55,22 @@ Chat::~Chat() {
     }
 }
 
+void Chat::setProvider(std::unique_ptr<Provider> provider) {
+    Q_ASSERT(provider != nullptr);
+    // Abandon the in-flight answer before the provider that owns it is dropped:
+    // stopStreaming() disconnects it and resets the streaming state, so the
+    // replaced provider can be destroyed without a callback reaching the chat.
+    // History and the model are left untouched. The abandonment is observable,
+    // like an explicit cancel (only the transition differs: no user intent).
+    const bool kAbandonedAnswer = isStreaming_;
+    stopStreaming();
+    provider_ = std::move(provider);
+    if (kAbandonedAnswer) {
+        emit cancelled();
+    }
+    emit providerChanged();
+}
+
 int Chat::rowCount(const QModelIndex& parent) const {
     // A list model has no children, so rows exist only under the root index.
     if (parent.isValid()) {

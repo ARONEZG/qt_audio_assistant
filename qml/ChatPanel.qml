@@ -42,13 +42,27 @@ Rectangle {
 
             // Placeholder switch for background audio capture. It only mirrors
             // the chat's flag; the flag itself is inert until the capture
-            // pipeline is wired in, so toggling it currently captures nothing.
+            // pipeline is wired in (issue #34), so toggling it captures nothing.
+            //
+            // Two-way sync: the Binding element keeps `checked` following the
+            // chat flag (and survives the control's own write on a click, unlike
+            // an inline `checked:` binding), while onCheckedChanged pushes the
+            // control's state back to the chat. onCheckedChanged is used rather
+            // than onToggled because toggled() is emitted only by a real user
+            // click, not by a programmatic toggle().
             CheckBox {
+                id: captureToggle
+
                 objectName: "backgroundCaptureToggle"
                 text: qsTr("Background audio capture")
-                checked: root.chat.backgroundCaptureEnabled
-                onCheckedChanged: root.chat.backgroundCaptureEnabled = checked
                 Accessible.name: qsTr("Background audio capture")
+                onCheckedChanged: root.chat.backgroundCaptureEnabled = captureToggle.checked
+
+                Binding {
+                    target: captureToggle
+                    property: "checked"
+                    value: root.chat.backgroundCaptureEnabled
+                }
             }
 
             BusyIndicator {
