@@ -75,9 +75,9 @@ void streamText(QTcpSocket& socket, const QByteArray& text) {
 
 }  // namespace
 
-// Covers ProviderSettings: the mutable, QML-facing configuration object, its
-// validation/persistence contract and the composition guarantee that a new chat
-// is minted from the latest saved settings.
+// Covers ProviderSettings: the mutable, QML-facing configuration object with a
+// single save command, its validation/persistence contract and the composition
+// guarantee that a new chat is minted from the latest saved settings.
 class TestProviderSettings : public QObject {
     Q_OBJECT
 
@@ -86,11 +86,13 @@ public:
 
 private slots:
     void test_exposesInitialValues();
-    void test_settersEmitSignalsAndExposeValues();
+    void test_saveReplacesTheConfigurationAsAWhole();
     void test_savePersistsUrlAndModelButNotTheKey();
+    void test_saveSucceedsWithoutAnApiKey();
+    void test_emptyApiKeyKeepsTheExistingSessionKey();
     void test_saveRejectsInvalidInput_data();
     void test_saveRejectsInvalidInput();
-    void test_editingClearsTheSaveError();
+    void test_clearErrorClearsTheSaveError();
     void test_newChatUsesSavedSettings();
     void test_eachChatIsMintedFromTheLatestSavedSettings();
 };
@@ -110,31 +112,38 @@ void TestProviderSettings::test_exposesInitialValues() {
     QCOMPARE(kSettings.baseUrl(), QStringLiteral("https://initial.test/v1"));
     QCOMPARE(kSettings.model(), QStringLiteral("initial-model"));
     QCOMPARE(kSettings.apiKey(), QStringLiteral("initial-key"));
+    QVERIFY(kSettings.isKeyConfigured());
     QVERIFY(kSettings.lastError().isEmpty());
 }
 
-void TestProviderSettings::test_settersEmitSignalsAndExposeValues() {
+void TestProviderSettings::test_saveReplacesTheConfigurationAsAWhole() {
     const QTemporaryDir kDirectory;
     QVERIFY(kDirectory.isValid());
     ProviderSettings settings({}, {}, ProviderConfigFile(kDirectory.filePath(QStringLiteral("provider.env"))));
+    const QSignalSpy kSavedSpy(&settings, &ProviderSettings::saved);
     const QSignalSpy kUrlSpy(&settings, &ProviderSettings::baseUrlChanged);
     const QSignalSpy kModelSpy(&settings, &ProviderSettings::modelChanged);
-    const QSignalSpy kKeySpy(&settings, &ProviderSettings::apiKeyChanged);
+    const QSignalSpy kKeySpy(&settings, &ProviderSettings::isKeyConfiguredChanged);
 
-    settings.setBaseUrl(QStringLiteral("https://changed.test/v1"));
-    settings.setModel(QStringLiteral("changed-model"));
-    settings.setApiKey(QStringLiteral("changed-key"));
+    QVERIFY(settings.save(QStringLiteral("  https://changed.test/v1  "),
+                          QStringLiteral("  changed-model  "),
+                          QStringLiteral("  changed-key  ")));
 
+    QCOMPARE(kSavedSpy.count(), 1);
     QCOMPARE(kUrlSpy.count(), 1);
     QCOMPARE(kModelSpy.count(), 1);
     QCOMPARE(kKeySpy.count(), 1);
     QCOMPARE(settings.baseUrl(), QStringLiteral("https://changed.test/v1"));
     QCOMPARE(settings.model(), QStringLiteral("changed-model"));
     QCOMPARE(settings.apiKey(), QStringLiteral("changed-key"));
+    QVERIFY(settings.isKeyConfigured());
 
-    // Idempotent setters do not spam signals.
-    settings.setBaseUrl(QStringLiteral("https://changed.test/v1"));
+    // Saving the same values again is a no-op for the change notifications; only
+    // the command completion is observable.
+    QVERIFY(settings.save(QStringLiteral("https://changed.test/v1"), QStringLiteral("changed-model"), QString()));
     QCOMPARE(kUrlSpy.count(), 1);
+    QCOMPARE(kModelSpy.count(), 1);
+    QCOMPARE(kSavedSpy.count(), 2);
 }
 
 void TestProviderSettings::test_savePersistsUrlAndModelButNotTheKey() {
@@ -142,15 +151,10 @@ void TestProviderSettings::test_savePersistsUrlAndModelButNotTheKey() {
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
     ProviderSettings settings({}, {}, kFile);
-    const QSignalSpy kSavedSpy(&settings, &ProviderSettings::saved);
 
-    settings.setBaseUrl(QStringLiteral("https://saved.test/v1"));
-    settings.setModel(QStringLiteral("saved-model"));
-    settings.setApiKey(QStringLiteral("super-secret"));
+    QVERIFY(settings.save(
+            QStringLiteral("https://saved.test/v1"), QStringLiteral("saved-model"), QStringLiteral("super-secret")));
 
-    QVERIFY(settings.save());
-
-    QCOMPARE(kSavedSpy.count(), 1);
     QVERIFY(settings.lastError().isEmpty());
     const QString kText = readText(kFile.path());
     QVERIFY(kText.contains(QStringLiteral("POLZA_BASE_URL=https://saved.test/v1")));
@@ -159,55 +163,88 @@ void TestProviderSettings::test_savePersistsUrlAndModelButNotTheKey() {
     QVERIFY(!kText.contains(QStringLiteral("POLZA_API_KEY")));
     // The key is still available in memory for the session.
     QCOMPARE(settings.apiKey(), QStringLiteral("super-secret"));
+    QVERIFY(settings.isKeyConfigured());
+}
+
+void TestProviderSettings::test_saveSucceedsWithoutAnApiKey() {
+    // Persisting the endpoint/model must not depend on a secret that is never
+    // persisted: the key is a separate session concern, and the provider reports
+    // a missing key honestly when a chat is actually sent.
+    const QTemporaryDir kDirectory;
+    QVERIFY(kDirectory.isValid());
+    const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
+    ProviderSettings settings({}, {}, kFile);
+
+    QVERIFY(settings.save(QStringLiteral("https://no-key.test/v1"), QStringLiteral("no-key-model"), QString()));
+
+    QVERIFY(settings.lastError().isEmpty());
+    QVERIFY(!settings.isKeyConfigured());
+    QVERIFY(QFile::exists(kFile.path()));
+    const QString kText = readText(kFile.path());
+    QVERIFY(kText.contains(QStringLiteral("POLZA_BASE_URL=https://no-key.test/v1")));
+    QVERIFY(kText.contains(QStringLiteral("POLZA_MODEL=no-key-model")));
+    QVERIFY(!kText.contains(QStringLiteral("POLZA_API_KEY")));
+}
+
+void TestProviderSettings::test_emptyApiKeyKeepsTheExistingSessionKey() {
+    // The form never displays a stored key, so an empty key field means "keep
+    // the key from the environment / previous session" rather than "erase it".
+    const QTemporaryDir kDirectory;
+    QVERIFY(kDirectory.isValid());
+    ProviderSettings settings({}, {}, ProviderConfigFile(kDirectory.filePath(QStringLiteral("provider.env"))));
+    QVERIFY(settings.save(
+            QStringLiteral("https://one.test/v1"), QStringLiteral("model-one"), QStringLiteral("env-key")));
+
+    QVERIFY(settings.save(QStringLiteral("https://two.test/v1"), QStringLiteral("model-two"), QStringLiteral("   ")));
+
+    QCOMPARE(settings.apiKey(), QStringLiteral("env-key"));
+    QVERIFY(settings.isKeyConfigured());
+    QCOMPARE(settings.baseUrl(), QStringLiteral("https://two.test/v1"));
+    QCOMPARE(settings.model(), QStringLiteral("model-two"));
 }
 
 void TestProviderSettings::test_saveRejectsInvalidInput_data() {
     QTest::addColumn<QString>("baseUrl");
     QTest::addColumn<QString>("model");
-    QTest::addColumn<QString>("apiKey");
 
-    QTest::newRow("empty url") << QString() << QStringLiteral("model") << QStringLiteral("key");
-    QTest::newRow("relative url") << QStringLiteral("example.test/v1") << QStringLiteral("model")
-                                  << QStringLiteral("key");
-    QTest::newRow("empty model") << QStringLiteral("https://example.test/v1") << QString() << QStringLiteral("key");
-    QTest::newRow("empty key") << QStringLiteral("https://example.test/v1") << QStringLiteral("model") << QString();
-    QTest::newRow("blank key") << QStringLiteral("https://example.test/v1") << QStringLiteral("model")
-                               << QStringLiteral("   ");
+    QTest::newRow("empty url") << QString() << QStringLiteral("model");
+    QTest::newRow("relative url") << QStringLiteral("example.test/v1") << QStringLiteral("model");
+    QTest::newRow("empty model") << QStringLiteral("https://example.test/v1") << QString();
 }
 
 void TestProviderSettings::test_saveRejectsInvalidInput() {
     QFETCH(QString, baseUrl);  // NOLINT(misc-const-correctness)
     QFETCH(QString, model);    // NOLINT(misc-const-correctness)
-    QFETCH(QString, apiKey);   // NOLINT(misc-const-correctness)
 
     const QTemporaryDir kDirectory;
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
     ProviderSettings settings({}, {}, kFile);
-    settings.setBaseUrl(baseUrl);
-    settings.setModel(model);
-    settings.setApiKey(apiKey);
+    QVERIFY(settings.save(QStringLiteral("https://kept.test/v1"), QStringLiteral("kept-model"), QString()));
+    const QString kPreviousText = readText(kFile.path());
 
-    QVERIFY(!settings.save());
+    QVERIFY(!settings.save(baseUrl, model, QString()));
 
+    // A rejected save is atomic: neither the stored value nor the file changes.
     QVERIFY(!settings.lastError().isEmpty());
-    QVERIFY(!QFile::exists(kFile.path()));
+    QCOMPARE(settings.baseUrl(), QStringLiteral("https://kept.test/v1"));
+    QCOMPARE(settings.model(), QStringLiteral("kept-model"));
+    QCOMPARE(readText(kFile.path()), kPreviousText);
 }
 
-void TestProviderSettings::test_editingClearsTheSaveError() {
+void TestProviderSettings::test_clearErrorClearsTheSaveError() {
     const QTemporaryDir kDirectory;
     QVERIFY(kDirectory.isValid());
     ProviderSettings settings({}, {}, ProviderConfigFile(kDirectory.filePath(QStringLiteral("provider.env"))));
     const QSignalSpy kErrorSpy(&settings, &ProviderSettings::lastErrorChanged);
 
-    QVERIFY(!settings.save());
+    QVERIFY(!settings.save(QString(), QStringLiteral("model"), QString()));
     QVERIFY(!settings.lastError().isEmpty());
-    const qsizetype kErrorsAfterFailure = kErrorSpy.count();
 
-    settings.setBaseUrl(QStringLiteral("https://example.test/v1"));
+    settings.clearError();
 
     QVERIFY(settings.lastError().isEmpty());
-    QCOMPARE(kErrorSpy.count(), kErrorsAfterFailure + 1);
+    QCOMPARE(kErrorSpy.count(), 2);
 }
 
 void TestProviderSettings::test_newChatUsesSavedSettings() {
@@ -219,10 +256,7 @@ void TestProviderSettings::test_newChatUsesSavedSettings() {
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
     ProviderSettings settings({}, {}, kFile);
-    settings.setBaseUrl(server.baseUrl());
-    settings.setModel(QStringLiteral("entered-model"));
-    settings.setApiKey(QStringLiteral("entered-key"));
-    QVERIFY(settings.save());
+    QVERIFY(settings.save(server.baseUrl(), QStringLiteral("entered-model"), QStringLiteral("entered-key")));
 
     const Providers kProviders(
             {ProviderOffer(QStringLiteral("openai-compatible"), QStringLiteral("OpenAI-compatible"), [&settings] {
@@ -255,10 +289,7 @@ void TestProviderSettings::test_eachChatIsMintedFromTheLatestSavedSettings() {
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
     ProviderSettings settings({}, {}, kFile);
-    settings.setBaseUrl(server.baseUrl());
-    settings.setModel(QStringLiteral("model-one"));
-    settings.setApiKey(QStringLiteral("key"));
-    QVERIFY(settings.save());
+    QVERIFY(settings.save(server.baseUrl(), QStringLiteral("model-one"), QStringLiteral("key")));
 
     const Providers kProviders(
             {ProviderOffer(QStringLiteral("openai-compatible"), QStringLiteral("OpenAI-compatible"), [&settings] {
@@ -277,9 +308,9 @@ void TestProviderSettings::test_eachChatIsMintedFromTheLatestSavedSettings() {
              QStringLiteral("model-one"));
 
     // A new chat is minted after the settings changed, so it must use the new
-    // model - the recipe reads the settings at fresh() time, not at startup.
-    settings.setModel(QStringLiteral("model-two"));
-    QVERIFY(settings.save());
+    // model - the recipe reads the settings at fresh() time, not at startup. The
+    // empty key means the session key is kept.
+    QVERIFY(settings.save(server.baseUrl(), QStringLiteral("model-two"), QString()));
     Chat* second = newChat.open(QStringLiteral("openai-compatible"));
     QVERIFY(second != nullptr);
     QSignalSpy secondReplySpy(second, &Chat::replyReceived);
@@ -287,6 +318,7 @@ void TestProviderSettings::test_eachChatIsMintedFromTheLatestSavedSettings() {
     QVERIFY(secondReplySpy.wait(kReplyTimeout));
     QCOMPARE(QJsonDocument::fromJson(server.lastRequestBody()).object().value(QStringLiteral("model")).toString(),
              QStringLiteral("model-two"));
+    QCOMPARE(settings.apiKey(), QStringLiteral("key"));
 }
 
 QTEST_GUILESS_MAIN(TestProviderSettings)

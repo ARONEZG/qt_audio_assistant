@@ -8,7 +8,7 @@
 #include "domain/ProviderConfig.h"
 #include "domain/ProviderConfigFile.h"
 
-// The provider configuration as the UI edits it.
+// The provider configuration as the UI sees it.
 //
 // This is the one intentionally mutable object in the chat domain. Every other
 // domain value is immutable; settings are not, because they are the user's
@@ -16,23 +16,31 @@
 // provider must observe the latest values rather than the ones captured at
 // startup.
 //
-// Responsibilities:
-//   * hold the current baseUrl / model (persisted) and apiKey (session only);
-//   * validate and persist baseUrl + model through the injected
-//     ProviderConfigFile;
-//   * report the reason a save was rejected through lastError (never a key).
+// Mutation is a single explicit command, not a set of property setters:
 //
-// The API key stays in memory for the session and is never written by save().
-// It is a separate field from the persisted ProviderConfig by design.
+//     save(baseUrl, model, apiKey)
+//
+// The command normalises and validates the whole draft, writes the persisted
+// pair (baseUrl + model), then replaces the stored value atomically
+// (config_ = normalized). A rejected save leaves both the previous state and
+// the previous file untouched. The view keeps its fields as a local draft; the
+// properties here are read-only.
+//
+// The API key is a session secret: it stays in memory, is never written by
+// save() and is deliberately not a readable QML property. The command accepts
+// it write-only (an empty value means "keep the current session key"), and QML
+// may read only isKeyConfigured, never the value.
 class ProviderSettings : public QObject {
     Q_OBJECT
     Q_DISABLE_COPY_MOVE(ProviderSettings)
     QML_ELEMENT
     QML_UNCREATABLE("Injected by the composition root")
 
-    Q_PROPERTY(QString baseUrl READ baseUrl WRITE setBaseUrl NOTIFY baseUrlChanged)
-    Q_PROPERTY(QString apiKey READ apiKey WRITE setApiKey NOTIFY apiKeyChanged)
-    Q_PROPERTY(QString model READ model WRITE setModel NOTIFY modelChanged)
+    Q_PROPERTY(QString baseUrl READ baseUrl NOTIFY baseUrlChanged)
+    Q_PROPERTY(QString model READ model NOTIFY modelChanged)
+    // Whether a session key is present. Exposed instead of the key itself so the
+    // view can hint the user without ever reading the secret back.
+    Q_PROPERTY(bool isKeyConfigured READ isKeyConfigured NOTIFY isKeyConfiguredChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
 
 public:
@@ -43,33 +51,37 @@ public:
     ~ProviderSettings() override;
 
     [[nodiscard]] QString baseUrl() const;
+    // Read by the composition root's provider recipe only; not exposed to QML.
     [[nodiscard]] QString apiKey() const;
+    [[nodiscard]] bool isKeyConfigured() const;
     [[nodiscard]] QString model() const;
     [[nodiscard]] QString lastError() const;
 
-    void setBaseUrl(QString baseUrl);
-    void setApiKey(QString apiKey);
-    void setModel(QString model);
-
-    // Validates the three fields, persists baseUrl + model and keeps apiKey in
-    // memory. Returns false and stores a user-facing reason in lastError when
-    // the values are missing or invalid; the previous configuration file is
-    // left untouched.
-    Q_INVOKABLE bool save();
+    // The single mutating command. Persists baseUrl + model; a non-empty apiKey
+    // replaces the in-memory session key, while an empty one keeps the current
+    // key (important when it came from the environment and was never shown in
+    // the form). Returns false and stores a user-facing reason in lastError when
+    // baseUrl/model are invalid; the previous configuration file and the stored
+    // settings are left untouched in that case.
+    Q_INVOKABLE bool save(const QString& baseUrl, const QString& model, const QString& apiKey);
 
     // Clears a previous save error (for example when the user starts editing
-    // again). Kept separate so the view can call it on open without touching
-    // the values.
+    // again). Kept separate so the view can call it on edit without mutating the
+    // stored configuration.
     Q_INVOKABLE void clearError();
 
 signals:
     void baseUrlChanged();
-    void apiKeyChanged();
     void modelChanged();
+    void isKeyConfiguredChanged();
     void lastErrorChanged();
     void saved();
 
 private:
+    // Applies a config that has already been validated and persisted, replacing
+    // the stored value as a whole and emitting only the changes that happened.
+    void applySavedConfig(const ProviderConfig& config, const QString& apiKey);
+
     void setLastError(const QString& error);
 
     ProviderConfig config_;

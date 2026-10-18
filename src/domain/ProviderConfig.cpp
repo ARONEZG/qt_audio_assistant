@@ -11,7 +11,10 @@ namespace {
 }
 
 [[nodiscard]] bool isHttpUrl(const QString& value) {
-    const QUrl kUrl(value, QUrl::StrictMode);
+    // Tolerant mode accepts hosts StrictMode rejects (for example underscores in
+    // internal host names); the explicit scheme + host checks below still reject
+    // relative URLs and non-http(s) endpoints.
+    const QUrl kUrl(value, QUrl::TolerantMode);
     if (!kUrl.isValid() || kUrl.host().isEmpty()) {
         return false;
     }

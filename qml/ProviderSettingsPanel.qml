@@ -3,11 +3,11 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import AudioAssistant
 
-// Provider configuration form: endpoint and model are persisted, the API key
-// stays in memory for the session and is masked while typed.
-// Public API: `settings`, injected by the composition root. The component holds
-// no configuration and performs no I/O; it binds the fields to ProviderSettings
-// and forwards the "save" intent.
+// Provider configuration form: base URL and model are persisted by the save
+// command, the API key is a masked, write-only session value.
+// Public API: `settings`, injected by the composition root. The form keeps the
+// fields as a local draft (ProviderSettings exposes read-only properties and a
+// single save command), so editing never mutates the stored configuration.
 GroupBox {
     id: root
 
@@ -32,11 +32,13 @@ GroupBox {
             }
 
             TextField {
+                id: baseUrlField
+
                 objectName: "providerBaseUrlField"
                 Layout.fillWidth: true
                 placeholderText: qsTr("https://host/v1")
                 text: root.settings.baseUrl
-                onTextEdited: root.settings.baseUrl = text
+                onTextEdited: root.settings.clearError()
                 Accessible.name: qsTr("Provider base URL")
             }
 
@@ -46,11 +48,13 @@ GroupBox {
             }
 
             TextField {
+                id: modelField
+
                 objectName: "providerModelField"
                 Layout.fillWidth: true
                 placeholderText: qsTr("model name")
                 text: root.settings.model
-                onTextEdited: root.settings.model = text
+                onTextEdited: root.settings.clearError()
                 Accessible.name: qsTr("Model")
             }
 
@@ -60,15 +64,18 @@ GroupBox {
             }
 
             TextField {
+                id: apiKeyField
+
                 objectName: "providerApiKeyField"
                 Layout.fillWidth: true
-                // The key is a session secret: it is masked in the UI and never
-                // written to the configuration file.
+                // The key is a session secret: masked, never read back from
+                // ProviderSettings and never persisted. An empty field keeps the
+                // key that may already come from the environment.
                 echoMode: TextInput.Password
-                placeholderText: qsTr("session only")
-                text: root.settings.apiKey
-                onTextEdited: root.settings.apiKey = text
+                placeholderText: root.settings.isKeyConfigured ? qsTr("configured — type to replace") : qsTr("session only")
+                onTextEdited: root.settings.clearError()
                 Accessible.name: qsTr("API key for this session")
+                Accessible.description: qsTr("Stored in memory for this session only; never saved to disk")
             }
         }
 
@@ -90,7 +97,15 @@ GroupBox {
                 objectName: "saveProviderSettingsButton"
                 text: qsTr("Save")
                 Accessible.name: qsTr("Save provider settings")
-                onClicked: root.settings.save()
+                onClicked: {
+                    if (root.settings.save(baseUrlField.text, modelField.text, apiKeyField.text)) {
+                        // The command normalised the draft; reflect the stored
+                        // values and drop the write-only key from the field.
+                        baseUrlField.text = root.settings.baseUrl;
+                        modelField.text = root.settings.model;
+                        apiKeyField.text = "";
+                    }
+                }
             }
         }
     }

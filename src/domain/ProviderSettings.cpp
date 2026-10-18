@@ -16,6 +16,10 @@ QString ProviderSettings::apiKey() const {
     return apiKey_;
 }
 
+bool ProviderSettings::isKeyConfigured() const {
+    return !apiKey_.trimmed().isEmpty();
+}
+
 QString ProviderSettings::model() const {
     return config_.model;
 }
@@ -24,44 +28,8 @@ QString ProviderSettings::lastError() const {
     return lastError_;
 }
 
-void ProviderSettings::setBaseUrl(QString baseUrl) {
-    if (config_.baseUrl == baseUrl) {
-        return;
-    }
-    config_.baseUrl = std::move(baseUrl);
-    clearError();
-    emit baseUrlChanged();
-}
-
-void ProviderSettings::setApiKey(QString apiKey) {
-    if (apiKey_ == apiKey) {
-        return;
-    }
-    apiKey_ = std::move(apiKey);
-    clearError();
-    emit apiKeyChanged();
-}
-
-void ProviderSettings::setModel(QString model) {
-    if (config_.model == model) {
-        return;
-    }
-    config_.model = std::move(model);
-    clearError();
-    emit modelChanged();
-}
-
-bool ProviderSettings::save() {
-    // An API key is required for a usable session, so an empty one is reported
-    // rather than silently producing a provider that always fails
-    // authentication. The key itself is never persisted.
-    const QString kKey = apiKey_.trimmed();
-    if (kKey.isEmpty()) {
-        setLastError(QStringLiteral("API key is required for the chat session."));
-        return false;
-    }
-
-    const ProviderConfig kNormalized{config_.baseUrl.trimmed(), config_.model.trimmed()};
+bool ProviderSettings::save(const QString& baseUrl, const QString& model, const QString& apiKey) {
+    const ProviderConfig kNormalized{baseUrl.trimmed(), model.trimmed()};
     const QString kValidation = kNormalized.validationError();
     if (!kValidation.isEmpty()) {
         setLastError(kValidation);
@@ -74,14 +42,35 @@ bool ProviderSettings::save() {
         return false;
     }
 
-    // Reflect normalisation in the live settings as well, so the provider the
-    // next chat mints uses exactly what was written.
-    setApiKey(kKey);
-    setBaseUrl(kNormalized.baseUrl);
-    setModel(kNormalized.model);
-    setLastError(QString());
-    emit saved();
+    applySavedConfig(kNormalized, apiKey);
     return true;
+}
+
+void ProviderSettings::applySavedConfig(const ProviderConfig& config, const QString& apiKey) {
+    // Replace the stored value as a whole (copy-and-modify rather than
+    // field-by-field mutation). The session key is replaced only when the view
+    // supplied one; an empty field means the existing key (for example from the
+    // environment) stays.
+    const QString kNormalizedKey = apiKey.trimmed();
+    const bool kWasKeyConfigured = isKeyConfigured();
+    const bool kBaseUrlChanged = config_.baseUrl != config.baseUrl;
+    const bool kModelChanged = config_.model != config.model;
+    config_ = config;
+    if (!kNormalizedKey.isEmpty()) {
+        apiKey_ = kNormalizedKey;
+    }
+    setLastError(QString());
+
+    if (kBaseUrlChanged) {
+        emit baseUrlChanged();
+    }
+    if (kModelChanged) {
+        emit modelChanged();
+    }
+    if (kWasKeyConfigured != isKeyConfigured()) {
+        emit isKeyConfiguredChanged();
+    }
+    emit saved();
 }
 
 void ProviderSettings::clearError() {

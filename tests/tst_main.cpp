@@ -220,10 +220,7 @@ void TestQmlChat::test_streamingTailShowsTheLiveReply() {
 
 void TestQmlChat::test_providerSettingsFieldsAreBound() {
     Harness harness;
-
-    harness.settings().setBaseUrl(QStringLiteral("https://bound.test/v1"));
-    harness.settings().setModel(QStringLiteral("bound-model"));
-    harness.settings().setApiKey(QStringLiteral("bound-key"));
+    QVERIFY(harness.settings().save(QStringLiteral("https://bound.test/v1"), QStringLiteral("bound-model"), QString()));
     QCoreApplication::processEvents();
 
     QObject* baseUrlField = harness.child(QStringLiteral("providerBaseUrlField"));
@@ -235,39 +232,64 @@ void TestQmlChat::test_providerSettingsFieldsAreBound() {
 
     QCOMPARE(baseUrlField->property("text").toString(), QStringLiteral("https://bound.test/v1"));
     QCOMPARE(modelField->property("text").toString(), QStringLiteral("bound-model"));
-    QCOMPARE(apiKeyField->property("text").toString(), QStringLiteral("bound-key"));
+    // The key is write-only: the field never renders the stored secret back.
+    QCOMPARE(apiKeyField->property("text").toString(), QString());
 }
 
 void TestQmlChat::test_apiKeyFieldIsMasked() {
     Harness harness;
-    harness.settings().setApiKey(QStringLiteral("secret-key"));
+    QVERIFY(harness.settings().save(
+            QStringLiteral("https://mask.test/v1"), QStringLiteral("mask-model"), QStringLiteral("secret-key")));
     QCoreApplication::processEvents();
 
     QObject* apiKeyField = harness.child(QStringLiteral("providerApiKeyField"));
     QVERIFY(apiKeyField != nullptr);
 
-    // The key is visible in the component (it is the session value) but the
-    // field masks it: the value is never rendered as plain text. QQuickTextInput
-    // is a private class, so its Password echo mode is pinned numerically here.
-    QCOMPARE(apiKeyField->property("text").toString(), QStringLiteral("secret-key"));
+    // Masked input. QQuickTextInput is a private class, so its Password echo
+    // mode is pinned numerically here.
     QCOMPARE(apiKeyField->property("echoMode").toInt(), 2);
+
+    // Write-only contract: the secret is not a readable QML property; only the
+    // boolean "configured" state is exposed, and the stored key is not rendered
+    // back into the field.
+    const QMetaObject* kSettingsMeta = harness.settings().metaObject();
+    QCOMPARE(kSettingsMeta->indexOfProperty("apiKey"), -1);
+    QVERIFY(kSettingsMeta->indexOfProperty("isKeyConfigured") >= 0);
+    QCOMPARE(apiKeyField->property("text").toString(), QString());
+    QVERIFY(harness.settings().isKeyConfigured());
 }
 
 void TestQmlChat::test_saveButtonPersistsProviderSettings() {
     Harness harness;
-    harness.settings().setBaseUrl(QStringLiteral("https://panel.test/v1"));
-    harness.settings().setModel(QStringLiteral("panel-model"));
-    harness.settings().setApiKey(QStringLiteral("panel-secret"));
     QCoreApplication::processEvents();
 
+    QObject* baseUrlField = harness.child(QStringLiteral("providerBaseUrlField"));
+    QObject* modelField = harness.child(QStringLiteral("providerModelField"));
+    QObject* apiKeyField = harness.child(QStringLiteral("providerApiKeyField"));
     QObject* saveButton = harness.child(QStringLiteral("saveProviderSettingsButton"));
+    QVERIFY(baseUrlField != nullptr);
+    QVERIFY(modelField != nullptr);
+    QVERIFY(apiKeyField != nullptr);
     QVERIFY(saveButton != nullptr);
 
+    // The form holds a local draft; the key is write-only and reaches C++ only
+    // when the save command is invoked.
+    QVERIFY(baseUrlField->setProperty("text", QStringLiteral("https://panel.test/v1")));
+    QVERIFY(modelField->setProperty("text", QStringLiteral("panel-model")));
+    QVERIFY(apiKeyField->setProperty("text", QStringLiteral("panel-secret")));
     QVERIFY(QMetaObject::invokeMethod(saveButton, "clicked"));
 
     // A failed save leaves the reason in lastError; assert it before reading the
     // file so a failure points at the cause, not at a missing file.
     QVERIFY(harness.settings().lastError().isEmpty());
+    QCOMPARE(harness.settings().baseUrl(), QStringLiteral("https://panel.test/v1"));
+    QCOMPARE(harness.settings().model(), QStringLiteral("panel-model"));
+    QCOMPARE(harness.settings().apiKey(), QStringLiteral("panel-secret"));
+    QVERIFY(harness.settings().isKeyConfigured());
+    // The key field is cleared after a successful save: the secret lives only in
+    // the C++ session, not in the view.
+    QCOMPARE(apiKeyField->property("text").toString(), QString());
+
     const QString kText = readTextFile(harness.configFile().path());
     QVERIFY(kText.contains(QStringLiteral("POLZA_BASE_URL=https://panel.test/v1")));
     QVERIFY(kText.contains(QStringLiteral("POLZA_MODEL=panel-model")));
