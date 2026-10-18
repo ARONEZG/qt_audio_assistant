@@ -1,6 +1,7 @@
 #include "domain/Chat.h"
 
 #include <cstddef>
+#include <optional>
 #include <utility>
 
 namespace {
@@ -8,13 +9,13 @@ namespace {
 // One user-facing line for a typed failure. The summary names the kind of
 // failure; the provider's detail (HTTP status, network text) is appended when it
 // carries information. kCancelled is deliberately not a failure and yields no
-// text, so a cancelled answer can never surface as an error.
-QString failureText(ProviderError error, const QString& detail) {
+// value, so a cancelled answer can never surface as an error.
+std::optional<QString> failureText(ProviderError error, const QString& detail) {
     if (error == ProviderError::kCancelled) {
-        return {};
+        return std::nullopt;
     }
 
-    QString summary = QStringLiteral("Request failed");
+    QString summary = QStringLiteral("Unexpected error");
     if (error == ProviderError::kNetwork) {
         summary = QStringLiteral("Network error");
     } else if (error == ProviderError::kAuthentication) {
@@ -99,7 +100,7 @@ QString Chat::errorText() const {
 }
 
 bool Chat::hasError() const noexcept {
-    return !errorText_.isEmpty();
+    return hasError_;
 }
 
 QString Chat::providerId() const {
@@ -116,7 +117,7 @@ void Chat::send(const QString& text) {
     }
     // A new request supersedes the failure of the previous one. An ignored send
     // (streaming or blank text) is not a new request and leaves it untouched.
-    setErrorText(QString());
+    clearError();
     appendMessage(Message(MessageRole::kUser, text));
     startStreaming();
 }
@@ -184,10 +185,17 @@ void Chat::setStreaming(bool streaming) {
 }
 
 void Chat::setErrorText(const QString& text) {
-    if (errorText_ == text) {
+    errorText_ = text;
+    hasError_ = true;
+    emit errorTextChanged();
+}
+
+void Chat::clearError() {
+    if (!hasError_) {
         return;
     }
-    errorText_ = text;
+    errorText_.clear();
+    hasError_ = false;
     emit errorTextChanged();
 }
 
@@ -203,9 +211,8 @@ void Chat::onAnswerCompleted(const Message& message) {
 
 void Chat::onAnswerFailed(ProviderError error, const QString& detail) {
     stopStreaming();
-    const QString kText = failureText(error, detail);
-    if (!kText.isEmpty()) {
-        setErrorText(kText);
+    if (const std::optional<QString> kText = failureText(error, detail); kText.has_value()) {
+        setErrorText(*kText);
     }
     emit failed(error, detail);
 }

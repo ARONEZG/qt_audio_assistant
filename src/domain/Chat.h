@@ -102,7 +102,10 @@ private:
     void stopStreaming();
     void setStreamingText(const QString& text);
     void setStreaming(bool streaming);
+    // The failure state is explicit rather than derived from errorText_, so an
+    // error with an empty presentation text still counts as an error.
     void setErrorText(const QString& text);
+    void clearError();
 
     void onChunkReceived(const QString& chunk);
     void onAnswerCompleted(const Message& message);
@@ -114,6 +117,7 @@ private:
     std::vector<Message> messages_;
     QString streamingText_;
     QString errorText_;
+    bool hasError_ = false;
     bool isStreaming_ = false;
     Answer* currentAnswer_ = nullptr;
 };

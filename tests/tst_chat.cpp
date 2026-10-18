@@ -232,7 +232,7 @@ void TestChat::test_failureTextMapsEveryProviderError_data() {
     QTest::newRow("rate-limit") << ProviderError::kRateLimit << QStringLiteral("Rate limit exceeded: detail");
     QTest::newRow("invalid-response") << ProviderError::kInvalidResponse
                                       << QStringLiteral("Invalid response from provider: detail");
-    QTest::newRow("unknown") << ProviderError::kUnknown << QStringLiteral("Request failed: detail");
+    QTest::newRow("unknown") << ProviderError::kUnknown << QStringLiteral("Unexpected error: detail");
 }
 
 void TestChat::test_failureTextMapsEveryProviderError() {
