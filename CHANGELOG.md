@@ -53,6 +53,33 @@
 
 ### Added
 
+- Сетевой провайдер LLM-чата (четвёртый инкремент плана):
+  `OpenAiCompatibleProvider` (`src/app/`) — адаптер над сторонним
+  `LLMQore::OpenAIClient`, реализующий доменный интерфейс `Provider`. Вся
+  трансляция инкапсулирована в адаптере: `std::vector<Message>` →
+  `LLMQore::Conversation`, а сигналы LLMQore
+  (`chunkReceived`/`requestFinalized`/`requestFailed`) → доменный `Answer`
+  (`appendChunk`/`complete`/`fail`). Типы LLMQore не протекают в domain/UI
+  (в заголовке — только forward declaration). `Answer::cancel()` через сигнал
+  `cancelled()` гасит реальный сетевой запрос (`OpenAIClient::cancelRequest`)
+  без изменения контракта `Provider`/`Answer` и без контроллера; сбои LLMQore
+  классифицируются в типизированный `ProviderError`
+  (`kNetwork`/`kAuthentication`/`kRateLimit`/`kInvalidResponse`/…), детали
+  остаются в тексте `fail`.
+- Конфигурация сетевого провайдера читается composition root'ом (`main()`) из
+  окружения (`POLZA_BASE_URL`/`POLZA_API_KEY`/`POLZA_MODEL`) и передаётся в
+  рецепт `ProviderOffer`; значения не хардкодятся, ключ не попадает в исходники,
+  QML, логи и Git. При отсутствии ключа/endpoint провайдер не падает, а честно
+  сообщает об ошибке (`kAuthentication`/`kUnknown`); при наличии конфигурации
+  приложение стримит ответ. В список `Providers` добавлен сетевой провайдер
+  рядом с offline-заглушкой.
+- Тесты `tst_openai_provider` (Qt Test + CTest, offscreen, детерминированно, без
+  внешней сети): адаптер проверяется сквозным сценарием против локального
+  OpenAI-совместимого mock-сервера на `QTcpServer` (`tests/OpenAiMockServer`) —
+  стриминг чанков и завершение, отображение истории и модели в тело запроса,
+  HTTP-ошибки 401/429/500/400, malformed JSON в SSE, обрыв потока посередине,
+  отмена с реальным разрывом соединения и таймаут. Mock-сервер — двойник
+  проводного протокола, не наследующий ни один project/LLMQore-тип.
 - Контракты слоя захвата аудио (`src/audio/`, статическая библиотека
   `audio-assistant-audio`): неизменяемый `AudioFormat` (частота дискретизации, число
   каналов, формат выборки f32; инварианты «частота > 0, каналы > 0» проверяются при

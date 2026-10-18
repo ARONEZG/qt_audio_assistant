@@ -125,6 +125,22 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
 ./build/audio-assistant
 ```
 
+### Сетевой провайдер (OpenAI-совместимый)
+
+Помимо offline-заглушки приложение предлагает сетевой провайдер, работающий с любым
+OpenAI-совместимым chat-completions endpoint. Конфигурация берётся из окружения:
+
+```bash
+POLZA_BASE_URL="https://<host>/api/v1" \
+POLZA_API_KEY="<secret>" \
+POLZA_MODEL="<model>" \
+./build/audio-assistant
+```
+
+`POLZA_API_KEY` — секрет: он не хранится в репозитории и не попадает в логи. Если ключ
+или endpoint не заданы, приложение всё равно запускается, но при отправке сообщения
+провайдер честно сообщает об ошибке (`kAuthentication`/`kUnknown`) вместо падения.
+
 ## Модули
 
 - `audio-assistant-domain` (`src/domain/`) — домен LLM-чата: сообщения, провайдеры, чаты.
@@ -163,7 +179,8 @@ ctest --preset audio-assistant-debug --output-on-failure
 - **Linux (Ubuntu 24.04, x86_64)**: проверено полностью — Debug/Release, ASan+UBSan,
   clang-format, clang-tidy, Qt Test. Qt 6.8.3 установлен через `aqtinstall`
   в `~/Qt/6.8.3/gcc_64`; LLMQore v0.8.0 подключается через Conan
-  (`recipes/llmqore`) и линкуется в исполняемый файл (без использования API).
+  (`recipes/llmqore`) и используется сетевым провайдером
+  `OpenAiCompatibleProvider` (`LLMQore::OpenAIClient` за доменным `Provider`).
   `miniaudio/0.11.25` подключается через ConanCenter: собирается один TU с
   `MINIAUDIO_IMPLEMENTATION` (библиотека `audio-assistant-audio`), заголовок
   включён как SYSTEM; API захвата не используется, добавлен только smoke-тест
