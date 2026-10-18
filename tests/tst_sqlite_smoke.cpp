@@ -5,13 +5,15 @@
 //    CMakeLists.txt, so the strict -Weverything -Werror profile still applies to
 //    this project-owned test while diagnostics inside the third-party header stay
 //    suppressed. A successful build therefore proves the compile wiring.
-//  * sqlite3_open/sqlite3_exec/sqlite3_libversion resolve from the Conan package,
-//    so a successful link proves the SQLite::SQLite3 wiring, including the system
-//    libraries the recipe declares (pthread/dl/m on Linux).
+//  * sqlite3_open/sqlite3_exec/sqlite3_prepare_v2/sqlite3_finalize/sqlite3_close
+//    and sqlite3_libversion resolve from the Conan package, so a successful link
+//    proves the SQLite::SQLite3 wiring, including the system libraries the recipe
+//    declares (pthread/dl/m on Linux).
 //  * The test only uses an in-memory database: no file is created and no
 //    persistence layer (schema, chats, messages) is exercised.
 #include <sqlite3.h>
 
+#include <QScopeGuard>
 #include <QString>
 #include <QtTest>
 
@@ -51,8 +53,16 @@ void TestSqliteSmoke::test_libraryIsLinkedAndReportsVersion() {
 }
 
 void TestSqliteSmoke::test_inMemoryDatabaseExecutesAndReadsBack() {
+    // A failing QCOMPARE/QVERIFY returns from the slot immediately, so the raw
+    // C handles are released by scope guards rather than by trailing calls: an
+    // early failure would otherwise leak the handle and ASan/lsan would report
+    // that leak on top of the real failure. sqlite3_close(NULL) and
+    // sqlite3_finalize(NULL) are no-ops, so the guards are safe even when the
+    // open/prepare call itself failed.
     sqlite3* database = nullptr;
-    QCOMPARE(sqlite3_open(":memory:", &database), SQLITE_OK);
+    const int kOpenResult = sqlite3_open(":memory:", &database);
+    const auto kCloseDatabase = qScopeGuard([database] { sqlite3_close(database); });
+    QCOMPARE(kOpenResult, SQLITE_OK);
     QVERIFY(database != nullptr);
 
     const auto kExecute = [database](const char* statement) {
@@ -62,14 +72,15 @@ void TestSqliteSmoke::test_inMemoryDatabaseExecutesAndReadsBack() {
     QCOMPARE(kExecute("INSERT INTO note(value) VALUES ('audio-assistant');"), SQLITE_OK);
 
     sqlite3_stmt* statement = nullptr;
-    QCOMPARE(sqlite3_prepare_v2(database, "SELECT value FROM note;", -1, &statement, nullptr), SQLITE_OK);
+    const int kPrepareResult = sqlite3_prepare_v2(database, "SELECT value FROM note;", -1, &statement, nullptr);
+    const auto kFinalizeStatement = qScopeGuard([statement] { sqlite3_finalize(statement); });
+    QCOMPARE(kPrepareResult, SQLITE_OK);
+
     QCOMPARE(sqlite3_step(statement), SQLITE_ROW);
     const unsigned char* value = sqlite3_column_text(statement, 0);
     QVERIFY(value != nullptr);
     QCOMPARE(QString::fromUtf8(reinterpret_cast<const char*>(value)), QStringLiteral("audio-assistant"));
     QCOMPARE(sqlite3_step(statement), SQLITE_DONE);
-    QCOMPARE(sqlite3_finalize(statement), SQLITE_OK);
-    QCOMPARE(sqlite3_close(database), SQLITE_OK);
 }
 
 QTEST_GUILESS_MAIN(TestSqliteSmoke)

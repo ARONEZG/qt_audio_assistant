@@ -284,7 +284,11 @@ set_target_properties(miniaudio::miniaudio PROPERTIES
 # engine (public domain / Unlicense) that the future persistence layer builds
 # on; the layer itself is not implemented yet, so today only the dependency and
 # its compile/link smoke test exist. See docs/ADR-persistence.md.
-find_package(SQLite3 REQUIRED)
+# The minimum is pinned (like spdlog above) so configuring against a different
+# sqlite3 fails immediately instead of silently building with another version;
+# the exact version still comes from the Conan toolchain. Keep in sync with the
+# "sqlite3/3.54.0" requirement in conanfile.py.
+find_package(SQLite3 3.54 REQUIRED)
 
 # sqlite3.h is third-party code. As with miniaudio.h, repeat Conan's include
 # directory as a SYSTEM include directory so the -Weverything -Werror profile
