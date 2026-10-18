@@ -5,6 +5,7 @@
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QRectF>
 #include <QString>
 #include <QTemporaryDir>
 #include <QUrl>
@@ -87,6 +88,22 @@ QObject* findInItems(QQuickItem* root, const QString& name) {
         }
     }
     return nullptr;
+}
+
+// The rectangle of `item` that is actually painted, in `root` coordinates: the
+// item's laid-out rect intersected with every clipping ancestor. A view clips
+// its content, so the laid-out rect alone would report content that never
+// reaches the screen.
+[[nodiscard]] QRectF paintedRect(QQuickItem* item, QQuickItem* root) {
+    QRectF painted = item->mapRectToItem(root, QRectF(0, 0, item->width(), item->height()));
+    for (QQuickItem* ancestor = item->parentItem(); ancestor != nullptr; ancestor = ancestor->parentItem()) {
+        if (!ancestor->clip()) {
+            continue;
+        }
+        painted =
+                painted.intersected(ancestor->mapRectToItem(root, QRectF(0, 0, ancestor->width(), ancestor->height())));
+    }
+    return painted;
 }
 
 // Mirrors SafeMarkdown's invariant: no '<' may reach the renderer unescaped.
@@ -194,6 +211,8 @@ private slots:
     void test_streamingTailShowsTheLiveReply();
     void test_messageDelegateRendersAssistantMarkdownAndUserPlainText();
     void test_streamingTailRendersSanitisedMarkdown();
+    void test_streamingTailFollowsEachAnswer();
+    void test_streamingTailStaysInsideTheChatPanel();
     void test_chatFailureShowsTheError();
     void test_providerSettingsFieldsAreBound();
     void test_apiKeyFieldIsMasked();
@@ -313,6 +332,91 @@ void TestQmlChat::test_streamingTailRendersSanitisedMarkdown() {
     const QString kText = tail->property("text").toString();
     QVERIFY(kText.contains(QStringLiteral("**live**")));
     QVERIFY(!hasUnescapedAngleBracket(kText));
+}
+
+// The tail mirrors the in-flight answer as it grows and is reused by the next
+// answer: the footer binding is live, not a snapshot taken when the view loaded.
+void TestQmlChat::test_streamingTailFollowsEachAnswer() {
+    Harness harness;
+    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
+    QCoreApplication::processEvents();
+
+    const auto kTailText = [&harness] {
+        QObject* tail = harness.child(QStringLiteral("streamingTail"));
+        return tail == nullptr ? QString() : tail->property("text").toString();
+    };
+
+    Chat* chat = harness.chats().at(0);
+    chat->send(QStringLiteral("hi"));
+    harness.minted().at(0)->lastAnswer()->appendChunk(QStringLiteral("first"));
+    QVERIFY(QTest::qWaitFor([&] { return kTailText().contains(QStringLiteral("first")); }));
+
+    // A later chunk reaches the already-visible tail.
+    harness.minted().at(0)->lastAnswer()->appendChunk(QStringLiteral(" second"));
+    QVERIFY(QTest::qWaitFor([&] { return kTailText().contains(QStringLiteral("first second")); }));
+
+    // Completing the answer freezes the text into a message and hides the tail.
+    harness.minted().at(0)->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("first second")));
+    QCoreApplication::processEvents();
+    QObject* hiddenTail = harness.child(QStringLiteral("streamingTail"));
+    QVERIFY(hiddenTail != nullptr);
+    QCOMPARE(hiddenTail->property("visible").toBool(), false);
+
+    // The next answer reuses the same tail.
+    chat->send(QStringLiteral("again"));
+    harness.minted().at(0)->lastAnswer()->appendChunk(QStringLiteral("next"));
+    QVERIFY(QTest::qWaitFor([&] { return kTailText().contains(QStringLiteral("next")); }));
+}
+
+// Regression: the live reasoning text is longer than the transcript, so an
+// uncontained tail painted over the panel border and its neighbours until the
+// answer was frozen into a message. The painted tail must stay inside the panel
+// it belongs to while it streams.
+void TestQmlChat::test_streamingTailStaysInsideTheChatPanel() {
+    Harness harness;
+    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
+    QCoreApplication::processEvents();
+    auto* window = qobject_cast<QQuickWindow*>(harness.root());
+    QVERIFY(window != nullptr);
+
+    Chat* chat = harness.chats().at(0);
+    chat->send(QStringLiteral("hi"));
+    // Far taller than one panel: without containment this overflowed the chat.
+    QString longReply;
+    for (int line = 0; line < 200; ++line) {
+        longReply += QStringLiteral("reasoning line %1\n").arg(line);
+    }
+    harness.minted().at(0)->lastAnswer()->appendChunk(longReply);
+    QCoreApplication::processEvents();
+
+    QQuickItem* windowRoot = window->contentItem();
+    QQuickItem* tail = nullptr;
+    QQuickItem* panel = nullptr;
+    // Wait until the long tail is laid out and does overflow the panel, so the
+    // assertion below exercises the actual defect rather than an empty layout.
+    QVERIFY(QTest::qWaitFor([&] {
+        tail = qobject_cast<QQuickItem*>(findInItems(windowRoot, QStringLiteral("streamingTail")));
+        panel = qobject_cast<QQuickItem*>(findInItems(windowRoot, QStringLiteral("chatPanel")));
+        return tail != nullptr && panel != nullptr && panel->width() > 0 && tail->height() > panel->height();
+    }));
+
+    const QRectF kPanel = panel->mapRectToItem(windowRoot, QRectF(0, 0, panel->width(), panel->height()));
+    const QRectF kPaintedTail = paintedRect(tail, windowRoot);
+
+    // The tail is on screen (its painted part is non-empty) ...
+    QVERIFY(kPaintedTail.height() > 0);
+    // ... and entirely within the panel that owns it.
+    QVERIFY(kPanel.contains(kPaintedTail));
+
+    // The transcript scrolls itself to the end, so a clipped tail shows the
+    // newest reasoning rather than only its first lines.
+    QQuickItem* transcript = qobject_cast<QQuickItem*>(findInItems(windowRoot, QStringLiteral("transcript")));
+    QVERIFY(transcript != nullptr);
+    QVERIFY(transcript->property("contentHeight").toReal() > transcript->height());
+    QVERIFY(QTest::qWaitFor([transcript] {
+        return transcript->property("contentY").toReal() + transcript->height() >=
+               transcript->property("contentHeight").toReal() - 1.0;
+    }));
 }
 
 void TestQmlChat::test_chatFailureShowsTheError() {
