@@ -47,7 +47,9 @@ private slots:
     void test_openWithUnknownIdCreatesNothing();
     void test_openWhenRecipeBuildsNothingCreatesNothing();
     void test_openedChatIsOwnedByTheGrid();
-    void test_eachOpenMintsAnIndependentProvider();
+    void test_reopeningReplacesTheProviderKeepingTheChat();
+    void test_reopeningPreservesTheConversation();
+    void test_reopeningWithUnknownIdKeepsTheOpenChat();
     void test_openedChatStreamsThroughTheMintedProvider();
 };
 
@@ -109,18 +111,59 @@ void TestNewChat::test_openedChatIsOwnedByTheGrid() {
     QCOMPARE(kDestroyedSpy.count(), 1);
 }
 
-void TestNewChat::test_eachOpenMintsAnIndependentProvider() {
+void TestNewChat::test_reopeningReplacesTheProviderKeepingTheChat() {
     std::vector<FakeProvider*> minted;
     const Providers kProviders({recordingOffer(QStringLiteral("fake"), minted)});
     Chats chats;
     NewChat newChat(chats, kProviders);
+    Chat* chat = newChat.open(QStringLiteral("fake"));
+    QVERIFY(chat != nullptr);
+    const QSignalSpy kProviderSpy(chat, &Chat::providerChanged);
 
-    QVERIFY(newChat.open(QStringLiteral("fake")) != nullptr);
-    QVERIFY(newChat.open(QStringLiteral("fake")) != nullptr);
+    // The application holds a single chat: re-opening swaps its provider instead
+    // of appending a second chat.
+    QCOMPARE(newChat.open(QStringLiteral("fake")), chat);
 
-    QCOMPARE(chats.count(), 2);
+    QCOMPARE(chats.count(), 1);
+    QCOMPARE(chats.at(0), chat);
     QCOMPARE(minted.size(), std::size_t{2});
     QVERIFY(minted.at(0) != minted.at(1));
+    QCOMPARE(kProviderSpy.count(), 1);
+}
+
+void TestNewChat::test_reopeningPreservesTheConversation() {
+    std::vector<FakeProvider*> minted;
+    const Providers kProviders({recordingOffer(QStringLiteral("fake"), minted)});
+    Chats chats;
+    NewChat newChat(chats, kProviders);
+    Chat* chat = newChat.open(QStringLiteral("fake"));
+    QVERIFY(chat != nullptr);
+    chat->send(QStringLiteral("hi"));
+    minted.at(0)->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("hello")));
+    QCOMPARE(chat->messages().size(), std::size_t{2});
+
+    QCOMPARE(newChat.open(QStringLiteral("fake")), chat);
+
+    // The conversation and the model rows survive the provider swap.
+    QCOMPARE(chats.count(), 1);
+    QCOMPARE(chat->messages().size(), std::size_t{2});
+    QCOMPARE(chat->rowCount(), 2);
+}
+
+void TestNewChat::test_reopeningWithUnknownIdKeepsTheOpenChat() {
+    std::vector<FakeProvider*> minted;
+    const Providers kProviders({recordingOffer(QStringLiteral("fake"), minted)});
+    Chats chats;
+    NewChat newChat(chats, kProviders);
+    Chat* chat = newChat.open(QStringLiteral("fake"));
+    QVERIFY(chat != nullptr);
+
+    QVERIFY(newChat.open(QStringLiteral("gone")) == nullptr);
+
+    // A failed lookup must not close the open chat or mint a provider.
+    QCOMPARE(chats.count(), 1);
+    QCOMPARE(chats.at(0), chat);
+    QCOMPARE(minted.size(), std::size_t{1});
 }
 
 void TestNewChat::test_openedChatStreamsThroughTheMintedProvider() {

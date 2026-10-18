@@ -4,37 +4,8 @@
 #include <optional>
 #include <utility>
 
+#include "domain/ProviderErrorText.h"
 #include "domain/SafeMarkdown.h"
-
-namespace {
-
-// One user-facing line for a typed failure. The summary names the kind of
-// failure; the provider's detail (HTTP status, network text) is appended when it
-// carries information. kCancelled is deliberately not a failure and yields no
-// value, so a cancelled answer can never surface as an error.
-std::optional<QString> failureText(ProviderError error, const QString& detail) {
-    if (error == ProviderError::kCancelled) {
-        return std::nullopt;
-    }
-
-    QString summary = QStringLiteral("Unexpected error");
-    if (error == ProviderError::kNetwork) {
-        summary = QStringLiteral("Network error");
-    } else if (error == ProviderError::kAuthentication) {
-        summary = QStringLiteral("Authentication failed");
-    } else if (error == ProviderError::kRateLimit) {
-        summary = QStringLiteral("Rate limit exceeded");
-    } else if (error == ProviderError::kInvalidResponse) {
-        summary = QStringLiteral("Invalid response from provider");
-    }
-
-    if (detail.isEmpty()) {
-        return summary;
-    }
-    return QStringLiteral("%1: %2").arg(summary, detail);
-}
-
-}  // namespace
 
 Chat::Chat(std::unique_ptr<Provider> provider, QObject* parent)
     : QAbstractListModel(parent), provider_(std::move(provider)) {
@@ -53,6 +24,22 @@ Chat::~Chat() {
     if (currentAnswer_ != nullptr) {
         disconnect(currentAnswer_, nullptr, this, nullptr);
     }
+}
+
+void Chat::setProvider(std::unique_ptr<Provider> provider) {
+    Q_ASSERT(provider != nullptr);
+    // Abandon the in-flight answer before the provider that owns it is dropped:
+    // stopStreaming() disconnects it and resets the streaming state, so the
+    // replaced provider can be destroyed without a callback reaching the chat.
+    // History and the model are left untouched. The abandonment is observable,
+    // like an explicit cancel (only the transition differs: no user intent).
+    const bool kAbandonedAnswer = isStreaming_;
+    stopStreaming();
+    provider_ = std::move(provider);
+    if (kAbandonedAnswer) {
+        emit cancelled();
+    }
+    emit providerChanged();
 }
 
 int Chat::rowCount(const QModelIndex& parent) const {
@@ -128,6 +115,18 @@ QString Chat::errorText() const {
 
 bool Chat::hasError() const noexcept {
     return hasError_;
+}
+
+bool Chat::isBackgroundCaptureEnabled() const noexcept {
+    return backgroundCaptureEnabled_;
+}
+
+void Chat::setBackgroundCaptureEnabled(bool enabled) {
+    if (backgroundCaptureEnabled_ == enabled) {
+        return;
+    }
+    backgroundCaptureEnabled_ = enabled;
+    emit backgroundCaptureChanged();
 }
 
 QString Chat::providerId() const {
@@ -308,7 +307,7 @@ void Chat::onAnswerCompleted(const Message& message) {
 
 void Chat::onAnswerFailed(ProviderError error, const QString& detail) {
     stopStreaming();
-    if (const std::optional<QString> kText = failureText(error, detail); kText.has_value()) {
+    if (const std::optional<QString> kText = providerFailureText(error, detail); kText.has_value()) {
         setErrorText(*kText);
     }
     emit failed(error, detail);

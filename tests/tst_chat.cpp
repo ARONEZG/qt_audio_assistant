@@ -50,6 +50,11 @@ public:
 private slots:
     void test_exposesProviderIdentity();
     void test_initialState();
+    void test_backgroundCaptureDefaultsOff();
+    void test_setBackgroundCaptureEmitsOnlyOnChange();
+    void test_setProviderReplacesIdentity();
+    void test_setProviderKeepsHistory();
+    void test_setProviderAbandonsTheInFlightAnswer();
     void test_sendAppendsUserMessageAndStartsStreaming();
     void test_chunksAccumulateIntoStreamingText();
     void test_completeAppendsReplyAndResetsStreaming();
@@ -106,6 +111,82 @@ void TestChat::test_initialState() {
     QCOMPARE(kChat.isStreaming(), false);
     QCOMPARE(kChat.errorText(), QString());
     QCOMPARE(kChat.hasError(), false);
+}
+
+// The background-capture flag is plain chat state; its default and its change
+// contract are part of the surface the chat exposes to the view (the composition
+// root maps the change to the capture pipeline).
+void TestChat::test_backgroundCaptureDefaultsOff() {
+    auto provider = std::make_unique<FakeProvider>();
+    const Chat kChat(std::move(provider));
+
+    QCOMPARE(kChat.isBackgroundCaptureEnabled(), false);
+}
+
+void TestChat::test_setBackgroundCaptureEmitsOnlyOnChange() {
+    auto provider = std::make_unique<FakeProvider>();
+    Chat chat(std::move(provider));
+    const QSignalSpy kCaptureSpy(&chat, &Chat::backgroundCaptureChanged);
+
+    chat.setBackgroundCaptureEnabled(true);
+    QCOMPARE(chat.isBackgroundCaptureEnabled(), true);
+    QCOMPARE(kCaptureSpy.count(), 1);
+
+    // Setting the value it already has is a no-op: no spurious notification.
+    chat.setBackgroundCaptureEnabled(true);
+    QCOMPARE(kCaptureSpy.count(), 1);
+
+    chat.setBackgroundCaptureEnabled(false);
+    QCOMPARE(chat.isBackgroundCaptureEnabled(), false);
+    QCOMPARE(kCaptureSpy.count(), 2);
+}
+
+// Replacing the provider swaps the backend while the conversation stays: the
+// chat keeps its identity (same object) and its history.
+void TestChat::test_setProviderReplacesIdentity() {
+    Chat chat(std::make_unique<FakeProvider>(QStringLiteral("one"), QStringLiteral("One")));
+    const QSignalSpy kProviderSpy(&chat, &Chat::providerChanged);
+
+    chat.setProvider(std::make_unique<FakeProvider>(QStringLiteral("two"), QStringLiteral("Two")));
+
+    QCOMPARE(chat.providerId(), QStringLiteral("two"));
+    QCOMPARE(chat.providerName(), QStringLiteral("Two"));
+    QCOMPARE(kProviderSpy.count(), 1);
+}
+
+void TestChat::test_setProviderKeepsHistory() {
+    auto first = std::make_unique<FakeProvider>();
+    FakeProvider* fake = first.get();
+    Chat chat(std::move(first));
+    chat.send(QStringLiteral("hi"));
+    fake->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("hello")));
+
+    chat.setProvider(std::make_unique<FakeProvider>(QStringLiteral("other"), QStringLiteral("Other")));
+
+    QCOMPARE(chat.messages().size(), std::size_t{2});
+    QCOMPARE(chat.rowCount(), 2);
+    QCOMPARE(chat.messages().at(0).text(), QStringLiteral("hi"));
+    QCOMPARE(chat.messages().at(1).text(), QStringLiteral("hello"));
+}
+
+// The in-flight answer belongs to the provider being replaced, so it is abandoned
+// first: the chat returns to idle (observably, like a cancel) rather than keeping
+// a stream that can never complete.
+void TestChat::test_setProviderAbandonsTheInFlightAnswer() {
+    auto first = std::make_unique<FakeProvider>();
+    Chat chat(std::move(first));
+    chat.send(QStringLiteral("hi"));
+    const QSignalSpy kCancelledSpy(&chat, &Chat::cancelled);
+    const QSignalSpy kStateSpy(&chat, &Chat::stateChanged);
+
+    chat.setProvider(std::make_unique<FakeProvider>(QStringLiteral("other"), QStringLiteral("Other")));
+
+    QCOMPARE(chat.isStreaming(), false);
+    QCOMPARE(chat.streamingText(), QString());
+    // Only the user message remains; the abandoned answer added no reply row.
+    QCOMPARE(chat.messages().size(), std::size_t{1});
+    QCOMPARE(kCancelledSpy.count(), 1);
+    QCOMPARE(kStateSpy.count(), 1);
 }
 
 void TestChat::test_sendAppendsUserMessageAndStartsStreaming() {

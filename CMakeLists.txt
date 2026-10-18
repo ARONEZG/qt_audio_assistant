@@ -337,12 +337,14 @@ target_link_libraries(audio-assistant-audio
 )
 
 # ── Domain library ──────────────────────────────────────────
-# Chat domain (immutable values, provider role interface, collections). Built as
-# a static library so the executable and every test target link the same
-# implementation, and used as the backing target of the AudioAssistant QML
-# module below (its types are the QML view models).
+# The application's QML view models and composition seams (immutable values,
+# provider role interface, collections, the chat/capture controllers). Built as a
+# static library so the executable and every test target link the same
+# implementation, and used as the backing target of the AudioAssistant QML module
+# below (its types are the QML view models).
 add_library(audio-assistant-domain STATIC
     src/domain/Answer.cpp
+    src/domain/AudioCapture.cpp
     src/domain/Chat.cpp
     src/domain/Chats.cpp
     src/domain/Message.cpp
@@ -351,6 +353,7 @@ add_library(audio-assistant-domain STATIC
     src/domain/ProviderConfig.cpp
     src/domain/ProviderConfigFile.cpp
     src/domain/ProviderConfigSource.cpp
+    src/domain/ProviderErrorText.cpp
     src/domain/ProviderOffer.cpp
     src/domain/ProviderSettings.cpp
     src/domain/Providers.cpp
@@ -378,10 +381,14 @@ target_include_directories(audio-assistant-domain PRIVATE
 # (QML_ELEMENT) in their headers; every consumer of the headers needs the Qml
 # include path. The types are the view models, so there is no separate adapter.
 # Qt6::Gui is private: SafeMarkdown sanitises untrusted assistant text through
-# QTextDocument, an implementation detail no header exposes.
+# QTextDocument, an implementation detail no header exposes. The audio library is
+# private too: AudioCapture is the capture-pipeline facade and its header only
+# forward-declares the audio types, so the dependency is an implementation detail
+# (it is still carried to the final link, as CMake does for a static library's
+# private dependencies).
 target_link_libraries(audio-assistant-domain
     PUBLIC Qt6::Core Qt6::Qml
-    PRIVATE audio-assistant-strict audio-assistant-qt-warnings Qt6::Gui
+    PRIVATE audio-assistant-strict audio-assistant-qt-warnings audio-assistant-audio Qt6::Gui
 )
 
 # ── QML module ──────────────────────────────────────────────
@@ -397,9 +404,9 @@ set(_audio_assistant_qml_files
     qml/Composer.qml
     qml/ConversationView.qml
     qml/ChatPanel.qml
-    qml/ProviderSelector.qml
+    qml/ChatView.qml
     qml/ProviderSettingsPanel.qml
-    qml/ChatGrid.qml
+    qml/SettingsDialog.qml
 )
 
 foreach(_qml_file IN LISTS _audio_assistant_qml_files)
@@ -425,7 +432,6 @@ qt_add_qml_module(audio-assistant-domain
 
 # ── Main executable ─────────────────────────────────────────
 add_executable(audio-assistant
-    src/app/AudioCapture.cpp
     src/app/OpenAiCompatibleProvider.cpp
     src/app/OpenAiCompatibleTranscriber.cpp
     src/app/PlaceholderProvider.cpp
@@ -793,7 +799,10 @@ set_tests_properties(tst_transcriber PROPERTIES
 # value types (-Wno-padded).
 qt_add_executable(tst_audiocapture
     tests/tst_audiocapture.cpp
-    src/app/AudioCapture.cpp
+    tests/FakeAudioSource.cpp
+    tests/FakeAudioSource.h
+    tests/FakeTranscriber.cpp
+    tests/FakeTranscriber.h
 )
 
 set_target_properties(tst_audiocapture PROPERTIES
@@ -846,7 +855,15 @@ audio_assistant_add_qml_test(tst_main
     tests/tst_main.cpp
     tests/FakeProvider.cpp
     tests/FakeProvider.h
+    tests/FakeAudioSource.cpp
+    tests/FakeAudioSource.h
+    tests/FakeTranscriber.cpp
+    tests/FakeTranscriber.h
 )
+
+# tst_main also drives the capture controls, so it needs the audio library's
+# headers and symbols (its own ring buffer and the capture facade's doubles).
+target_link_libraries(tst_main PRIVATE audio-assistant-audio)
 
 # ── Logging tests ───────────────────────────────────────────
 qt_add_executable(tst_logging

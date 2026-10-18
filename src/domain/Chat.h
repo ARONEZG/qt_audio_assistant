@@ -17,8 +17,9 @@
 #include "domain/Message.h"
 #include "domain/Provider.h"
 
-// One chat cell of the grid. It owns its provider (dependency injected through
-// the constructor) and keeps an append-only history of finished messages. The
+// One chat. It owns its provider (dependency injected through the constructor;
+// replaceable later with setProvider) and keeps an append-only history of
+// finished messages. The
 // in-flight answer never touches the history: it lives in streamingText() until
 // the provider completes it, at which point it is frozen into a Message.
 //
@@ -41,8 +42,10 @@ class Chat : public QAbstractListModel {
     QML_ELEMENT
     QML_UNCREATABLE("Chats creates chats from a provider")
 
-    Q_PROPERTY(QString providerId READ providerId CONSTANT)
-    Q_PROPERTY(QString providerName READ providerName CONSTANT)
+    // The chat's provider can be replaced at runtime (setProvider), so its
+    // identity is not constant: switching provider keeps the conversation.
+    Q_PROPERTY(QString providerId READ providerId NOTIFY providerChanged)
+    Q_PROPERTY(QString providerName READ providerName NOTIFY providerChanged)
     // Raw text of the in-flight reply. Transient: empty once the stream ends
     // (the finished text then lives in the history as a Message).
     Q_PROPERTY(QString streamingText READ streamingText NOTIFY streamingTextChanged)
@@ -63,6 +66,12 @@ class Chat : public QAbstractListModel {
     // a failure, so a cancelled answer never sets it.
     Q_PROPERTY(QString errorText READ errorText NOTIFY errorTextChanged)
     Q_PROPERTY(bool hasError READ hasError NOTIFY errorTextChanged)
+    // Background-audio capture switch, toggled from the chat header. The flag is
+    // the chat's own state; the composition root connects its change to the
+    // capture pipeline (start/stop the source, and revert the flag when the
+    // microphone is unavailable), so the chat itself stays unaware of audio.
+    Q_PROPERTY(bool backgroundCaptureEnabled READ isBackgroundCaptureEnabled WRITE setBackgroundCaptureEnabled NOTIFY
+                       backgroundCaptureChanged)
 
 public:
     // The message roles a delegate binds to. Qt roles are plain ints by design,
@@ -93,6 +102,13 @@ public:
     explicit Chat(std::unique_ptr<Provider> provider, QObject* parent = nullptr);
     ~Chat() override;
 
+    // Replaces the provider with a freshly minted one, keeping the conversation
+    // and the model rows untouched. Any in-flight answer is abandoned first - its
+    // Answer belongs to the provider being replaced. The provider must not be
+    // null. Used when the user switches provider or saves new settings: the chat
+    // continues with the new backend instead of losing its history.
+    void setProvider(std::unique_ptr<Provider> provider);
+
     [[nodiscard]] int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     [[nodiscard]] QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
@@ -103,6 +119,8 @@ public:
     [[nodiscard]] bool isStreaming() const noexcept;
     [[nodiscard]] QString errorText() const;
     [[nodiscard]] bool hasError() const noexcept;
+    [[nodiscard]] bool isBackgroundCaptureEnabled() const noexcept;
+    void setBackgroundCaptureEnabled(bool enabled);
     [[nodiscard]] QString providerId() const;
     [[nodiscard]] QString providerName() const;
 
@@ -123,6 +141,10 @@ signals:
     void streamingMarkupChanged();
     void stateChanged();
     void errorTextChanged();
+    // Emitted when the provider identity changes (setProvider).
+    void providerChanged();
+    // Emitted only when the background-capture switch actually changes value.
+    void backgroundCaptureChanged();
     void replyReceived(const Message& message);
     // Typed failure so the presentation layer can branch (retry on Network,
     // prompt on Authentication, ...).
@@ -196,5 +218,7 @@ private:
     QString errorText_;
     bool hasError_ = false;
     bool isStreaming_ = false;
+    // Stub state for the future background-audio feature (see the property).
+    bool backgroundCaptureEnabled_ = false;
     Answer* currentAnswer_ = nullptr;
 };

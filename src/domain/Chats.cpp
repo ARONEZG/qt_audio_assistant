@@ -61,10 +61,10 @@ Chat* Chats::add(std::unique_ptr<Provider> provider) {
     chats_.push_back(std::make_unique<Chat>(std::move(provider)));
     endInsertRows();
     Chat* chat = chats_.back().get();
-    // The grid owns its chats through unique_ptr, so a chat handed to QML (via
-    // the model role or NewChat::open) must stay C++-owned; otherwise the QML
-    // engine would take JavaScript ownership of a parentless QObject and delete
-    // it, leaving the grid's unique_ptr dangling.
+    // The collection owns its chats through unique_ptr, so a chat handed to QML
+    // (via the model role or NewChat::open) must stay C++-owned; otherwise the
+    // QML engine would take JavaScript ownership of a parentless QObject and
+    // delete it, leaving the collection's unique_ptr dangling.
     QQmlEngine::setObjectOwnership(chat, QQmlEngine::CppOwnership);
     emit countChanged();
     return chat;

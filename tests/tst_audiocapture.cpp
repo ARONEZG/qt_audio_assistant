@@ -10,123 +10,24 @@
 //
 // No device, no network, no sleep: the only asynchrony is the transcriber's
 // queued emission, awaited with QTRY_*.
-#include <QMetaObject>
-#include <QObject>
 #include <QSignalSpy>
 #include <QString>
 #include <QtTest>
 #include <chrono>
-#include <utility>
 #include <vector>
 
-#include "app/AudioCapture.h"
+#include "FakeAudioSource.h"
+#include "FakeTranscriber.h"
 #include "audio/AudioBuffer.h"
 #include "audio/AudioFormat.h"
-#include "audio/AudioSource.h"
+#include "domain/AudioCapture.h"
 #include "domain/ProviderError.h"
-#include "domain/TranscriptionProvider.h"
 
 namespace {
 
 constexpr auto kBufferDuration = std::chrono::milliseconds{100};
 
-// The canonical capture stream: 16 kHz, mono, f32 (see AudioFormat.h).
-audio::AudioFormat canonicalFormat() {
-    return {16000U, 1U, audio::SampleFormat::kFloat32};
-}
-
-// Double for the AudioSource role: counts the lifecycle commands and answers
-// format() with the canonical stream without ever touching a device.
-class FakeAudioSource final : public audio::AudioSource {
-public:
-    void start() override {
-        ++startCount_;
-    }
-    void stop() override {
-        ++stopCount_;
-    }
-
-    [[nodiscard]] audio::AudioFormat format() const noexcept override {
-        return canonicalFormat();
-    }
-
-    [[nodiscard]] int startCount() const noexcept {
-        return startCount_;
-    }
-    [[nodiscard]] int stopCount() const noexcept {
-        return stopCount_;
-    }
-
-private:
-    int startCount_ = 0;
-    int stopCount_ = 0;
-};
-
 }  // namespace
-
-// Double for the TranscriptionProvider role: records the samples it was handed
-// and emits exactly one terminal signal, always from the event loop (never
-// synchronously inside transcribe()), mirroring the real network adapter.
-class FakeTranscriber final : public TranscriptionProvider {
-    Q_OBJECT
-    Q_DISABLE_COPY_MOVE(FakeTranscriber)
-
-    // Ordered widest-first so the class carries no internal padding.
-    std::vector<float> lastSamples_;
-    QString text_;
-    QString message_;
-    int callCount_ = 0;
-    ProviderError error_ = ProviderError::kUnknown;
-    bool succeeds_ = true;
-
-public:
-    explicit FakeTranscriber(QObject* parent = nullptr) : TranscriptionProvider(parent) {
-    }
-    ~FakeTranscriber() override = default;
-
-    void transcribe(std::vector<float> samples) override {
-        lastSamples_ = std::move(samples);
-        ++callCount_;
-        // Queued so the terminal signal is never emitted synchronously inside
-        // transcribe() (the TranscriptionProvider contract); a pointer to the
-        // member keeps the slot name compile-time checked.
-        //
-        // The analyzer's NewDeleteLeaks here is a false positive: Qt owns the
-        // callable inside the posted QMetaCallEvent and frees it after delivery,
-        // which the analyzer cannot see through the event queue.
-        // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
-        QMetaObject::invokeMethod(this, &FakeTranscriber::emitPendingResult, Qt::QueuedConnection);
-    }
-
-    // Configures the outcome the queued emission reports.
-    void succeedWith(QString text) {
-        succeeds_ = true;
-        text_ = std::move(text);
-    }
-    void failWith(ProviderError error, QString message) {
-        succeeds_ = false;
-        error_ = error;
-        message_ = std::move(message);
-    }
-
-    [[nodiscard]] int callCount() const noexcept {
-        return callCount_;
-    }
-    [[nodiscard]] const std::vector<float>& lastSamples() const noexcept {
-        return lastSamples_;
-    }
-
-private slots:
-    // Emits the configured terminal signal from the event loop, so transcribe()
-    // never emits synchronously (the TranscriptionProvider contract).
-    void emitPendingResult() {
-        if (succeeds_) {
-            emit transcribed(text_);
-        } else {
-            emit failed(error_, message_);
-        }
-    }
-};
 
 class TestAudioCapture : public QObject {
     Q_OBJECT
@@ -142,6 +43,9 @@ private slots:
     void test_terminalSignalIsNotSynchronous();
     void test_startStopDelegateToSource();
     void test_formatDelegatesToSource();
+    void test_failedTranscriptionExposesErrorText();
+    void test_newTranscribeClearsTheError();
+    void test_cancelledFailureLeavesNoError();
 };
 
 TestAudioCapture::TestAudioCapture(QObject* parent) : QObject(parent) {
@@ -247,6 +151,59 @@ void TestAudioCapture::test_formatDelegatesToSource() {
     const AudioCapture kCapture(buffer, source, transcriber);
 
     QCOMPARE(kCapture.format(), canonicalFormat());
+}
+
+// A failed request leaves a user-facing reason on the facade (the view mirrors
+// it), the same way Chat surfaces a failed reply.
+void TestAudioCapture::test_failedTranscriptionExposesErrorText() {
+    audio::AudioBuffer buffer(kBufferDuration, canonicalFormat());
+    FakeAudioSource source;
+    FakeTranscriber transcriber;
+    AudioCapture capture(buffer, source, transcriber);
+    QCOMPARE(capture.hasError(), false);
+    transcriber.failWith(ProviderError::kAuthentication, QStringLiteral("bad key"));
+    const QSignalSpy kErrorSpy(&capture, &AudioCapture::errorTextChanged);
+
+    capture.transcribeLast();
+
+    QTRY_COMPARE(capture.hasError(), true);
+    QVERIFY(capture.errorText().contains(QStringLiteral("bad key")));
+    QCOMPARE(kErrorSpy.count(), 1);
+}
+
+void TestAudioCapture::test_newTranscribeClearsTheError() {
+    audio::AudioBuffer buffer(kBufferDuration, canonicalFormat());
+    FakeAudioSource source;
+    FakeTranscriber transcriber;
+    AudioCapture capture(buffer, source, transcriber);
+    transcriber.failWith(ProviderError::kRateLimit, QStringLiteral("slow down"));
+    capture.transcribeLast();
+    QTRY_COMPARE(capture.hasError(), true);
+
+    // A new request supersedes the previous failure (mirrors Chat::send).
+    transcriber.succeedWith(QStringLiteral("ok"));
+    const QSignalSpy kTranscribedSpy(&capture, &AudioCapture::transcribed);
+    capture.transcribeLast();
+
+    QCOMPARE(capture.hasError(), false);
+    QCOMPARE(capture.errorText(), QString());
+    QTRY_COMPARE(kTranscribedSpy.count(), 1);
+}
+
+// Cancellation is not a failure: it is relayed but leaves no error on the view.
+void TestAudioCapture::test_cancelledFailureLeavesNoError() {
+    audio::AudioBuffer buffer(kBufferDuration, canonicalFormat());
+    FakeAudioSource source;
+    FakeTranscriber transcriber;
+    AudioCapture capture(buffer, source, transcriber);
+    transcriber.failWith(ProviderError::kCancelled, QStringLiteral("cancelled"));
+    const QSignalSpy kFailedSpy(&capture, &AudioCapture::failed);
+
+    capture.transcribeLast();
+
+    QTRY_COMPARE(kFailedSpy.count(), 1);
+    QCOMPARE(capture.hasError(), false);
+    QCOMPARE(capture.errorText(), QString());
 }
 
 QTEST_GUILESS_MAIN(TestAudioCapture)
