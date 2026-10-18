@@ -56,6 +56,8 @@ BUILD_JOBS="${BUILD_JOBS:-}"
 _cpu_count() {
     if command -v nproc &>/dev/null; then
         nproc
+    elif command -v sysctl &>/dev/null; then
+        sysctl -n hw.ncpu 2>/dev/null || echo 4
     else
         echo 4
     fi
@@ -447,8 +449,9 @@ phase_analysis() { "$SCRIPT_DIR/static-analysis.sh" "$_ANALYSIS_MODE"; }
 # diagnostics stay readable. Returns non-zero if any phase failed.
 run_parallel() {
     local share="$1"
+    local analysis_share="$2"
     export BUILD_JOBS="$share"
-    export ANALYSIS_JOBS="$share"
+    export ANALYSIS_JOBS="$analysis_share"
 
     local status_dir
     status_dir=$(mktemp -d)
@@ -459,8 +462,12 @@ run_parallel() {
     for p in "${phases[@]}"; do
         i=$((i + 1))
         (
+            # errexit is off here on purpose: a failing phase must not abort the
+            # subshell before its exit status is captured.
+            set +e
             "phase_$p" > "$status_dir/$i.log" 2>&1
-            printf '%s\n' "$?" > "$status_dir/$i.status"
+            rc=$?
+            printf '%s\n' "$rc" > "$status_dir/$i.status"
         ) &
     done
     wait || true
@@ -545,13 +552,19 @@ run_all() {
     # The three remaining builds + static analysis are independent of each
     # other (Debug's compile_commands.json already exists). Run them
     # concurrently, splitting the job budget evenly so the machine is not
-    # oversubscribed.
+    # oversubscribed. The analysis phase is the most memory-hungry, so its
+    # budget is additionally capped by the memory-aware limit (mem_aware_jobs
+    # is a standalone cap; take the smaller of the two).
     echo ""
     echo "--- Phase 3: Release + Sanitizers + Coverage + Analysis (parallel) ---"
     local share
     share=$(( $(build_jobs) / 4 ))
     [ "$share" -lt 1 ] && share=1
-    run_parallel "$share" || failed_steps=$((failed_steps + 1))
+    local analysis_share
+    analysis_share=$(mem_aware_jobs)
+    [ "$analysis_share" -gt "$share" ] && analysis_share=$share
+    [ "$analysis_share" -lt 1 ] && analysis_share=1
+    run_parallel "$share" "$analysis_share" || failed_steps=$((failed_steps + 1))
 
     echo ""
     echo "======================================"
@@ -581,12 +594,17 @@ fast_run() {
     echo ""
     echo "--- Linters (changed files) ---"
     local files
-    files=$(changed_cpp_files)
-    if [ -z "$files" ]; then
-        info "No changed C++ files — skipping clang-tidy/clazy"
+    if git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+        files=$(changed_cpp_files)
+        if [ -z "$files" ]; then
+            info "No changed C++ files — skipping clang-tidy/clazy"
+        else
+            info "   $(wc -l <<< "$files") changed file(s)"
+            ANALYSIS_FILES="$files" "$SCRIPT_DIR/static-analysis.sh" --linters || failed=$((failed + 1))
+        fi
     else
-        info "   $(wc -l <<< "$files") changed file(s)"
-        ANALYSIS_FILES="$files" "$SCRIPT_DIR/static-analysis.sh" --linters || failed=$((failed + 1))
+        warn "origin/main not found — linting all translation units (no change base)"
+        "$SCRIPT_DIR/static-analysis.sh" --linters || failed=$((failed + 1))
     fi
 
     echo ""
