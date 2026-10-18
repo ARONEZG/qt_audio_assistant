@@ -99,17 +99,19 @@ find_clangpp() {
     echo ""
 }
 
-# ── Conan dependencies (spdlog, llmqore) ────────────────────
+# ── Conan dependencies (spdlog, miniaudio, sqlite3, llmqore) ─
 
 CONAN_BUILD_DIR="$PROJECT_ROOT/build/conan"
 CONAN_LLMQORE_RECIPE="$PROJECT_ROOT/recipes/llmqore"
 _CONAN_INSTALLED=""
 
-# spdlog and LLMQore are managed Conan dependencies (conanfile.py) and CMake
-# pins find_package(spdlog 1.14 REQUIRED) / find_package(LLMQore REQUIRED), so
-# every CMake configure must be preceded by `conan install` and receive
-# -DCONAN_BUILD_DIR. spdlog comes from ConanCenter; llmqore is built from the
-# in-repo recipe, which has to be exported into the cache first.
+# spdlog, miniaudio, sqlite3 and LLMQore are managed Conan dependencies
+# (conanfile.py) and CMake pins find_package(spdlog 1.14 REQUIRED) /
+# find_package(SQLite3 REQUIRED) / find_package(LLMQore REQUIRED), so every
+# CMake configure must be preceded by `conan install` and receive
+# -DCONAN_BUILD_DIR. spdlog, miniaudio and sqlite3 come from ConanCenter;
+# llmqore is built from the in-repo recipe, which has to be exported into the
+# cache first.
 #
 # The in-repo profile is passed for both the build and host contexts so no
 # machine-global default profile is required; the build type is matched so
@@ -126,7 +128,7 @@ conan_install() {
             ;;
     esac
     if ! command -v conan &>/dev/null; then
-        fail "conan not found in PATH (required for the spdlog/llmqore dependencies)"
+        fail "conan not found in PATH (required for the spdlog/miniaudio/sqlite3/llmqore dependencies)"
         return 1
     fi
     info "Conan export recipes/llmqore"
