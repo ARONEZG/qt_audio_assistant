@@ -43,6 +43,12 @@ public:
 
     [[nodiscard]] int requestCount() const noexcept;
     [[nodiscard]] QByteArray lastRequestBody() const;
+    // The request target of the last fully received request, e.g.
+    // "/v1/audio/transcriptions" (the second token of the request line).
+    [[nodiscard]] QByteArray lastRequestTarget() const;
+    // The value of a header of the last fully received request, trimmed and
+    // looked up case-insensitively; empty when the header is absent.
+    [[nodiscard]] QByteArray lastRequestHeader(const QByteArray& name) const;
 
 signals:
     // Emitted once a client closed a connection. A scenario that keeps the
@@ -52,6 +58,7 @@ signals:
 private:
     struct Connection {
         QByteArray buffer;
+        QByteArray head;
         qsizetype bodyOffset = 0;
         qsizetype contentLength = 0;
         bool headersParsed = false;
@@ -67,4 +74,5 @@ private:
     std::map<QTcpSocket*, Connection> connections_;
     int requestCount_ = 0;
     QByteArray lastRequestBody_;
+    QByteArray lastRequestHead_;
 };

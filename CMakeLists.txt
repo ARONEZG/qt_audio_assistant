@@ -298,6 +298,7 @@ add_library(audio-assistant-audio STATIC
     src/audio/AudioSource.cpp
     src/audio/MiniaudioCaptureSource.cpp
     src/audio/MiniaudioImplementation.cpp
+    src/audio/WavEncoder.cpp
 )
 
 set_target_properties(audio-assistant-audio PROPERTIES
@@ -335,6 +336,7 @@ add_library(audio-assistant-domain STATIC
     src/domain/ProviderSettings.cpp
     src/domain/Providers.cpp
     src/domain/SafeMarkdown.cpp
+    src/domain/TranscriptionProvider.cpp
 )
 
 set_target_properties(audio-assistant-domain PROPERTIES
@@ -405,6 +407,7 @@ qt_add_qml_module(audio-assistant-domain
 # ── Main executable ─────────────────────────────────────────
 add_executable(audio-assistant
     src/app/OpenAiCompatibleProvider.cpp
+    src/app/OpenAiCompatibleTranscriber.cpp
     src/app/PlaceholderProvider.cpp
     src/main.cpp
     src/logging/LogBridge.cpp
@@ -671,6 +674,62 @@ target_link_libraries(tst_miniaudiocapturesource PRIVATE
 
 add_test(NAME tst_miniaudiocapturesource COMMAND tst_miniaudiocapturesource)
 set_tests_properties(tst_miniaudiocapturesource PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── WAV encoder test ────────────────────────────────────────
+# Covers the STL-only PCM -> 16-bit WAV encoder byte-for-byte (RIFF fields,
+# format-derived header, f32 -> int16 mapping and clamping, empty input). No
+# device and no Qt beyond the test framework.
+qt_add_executable(tst_wavencoder
+    tests/tst_wavencoder.cpp
+)
+
+set_target_properties(tst_wavencoder PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_wavencoder PRIVATE
+    audio-assistant-strict
+    audio-assistant-audio
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_wavencoder COMMAND tst_wavencoder)
+set_tests_properties(tst_wavencoder PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── Transcription adapter test ──────────────────────────────
+# Exercises the OpenAI-compatible transcriber against the local mock HTTP
+# server (tests/OpenAiMockServer): WAV+base64 request shape, successful text,
+# HTTP error classification, malformed/missing-text JSON, transport failure,
+# cancellation and supersede. It links the audio library (WAV encoding) and Qt
+# Network, never an external endpoint.
+qt_add_executable(tst_transcriber
+    tests/tst_transcriber.cpp
+    tests/OpenAiMockServer.cpp
+    tests/OpenAiMockServer.h
+    src/app/OpenAiCompatibleTranscriber.cpp
+)
+
+set_target_properties(tst_transcriber PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_transcriber PRIVATE
+    audio-assistant-strict
+    audio-assistant-qt-warnings
+    audio-assistant-audio
+    audio-assistant-domain
+    Qt6::Core
+    Qt6::Network
+    Qt6::Test
+)
+
+add_test(NAME tst_transcriber COMMAND tst_transcriber)
+set_tests_properties(tst_transcriber PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
