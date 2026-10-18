@@ -424,7 +424,7 @@ ensure_compile_commands() {
     mkdir -p "$build_dir"
 
     if ! command -v conan &>/dev/null; then
-        fail "conan not found in PATH (required for the spdlog/llmqore dependencies)"
+        fail "conan not found in PATH (required for the spdlog/miniaudio/sqlite3/llmqore dependencies)"
         return 1
     fi
     info "Conan export recipes/llmqore"
