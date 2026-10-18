@@ -27,6 +27,7 @@ QtObject {
     readonly property color border: "#444444"
     readonly property color textPrimary: "#ffffff"
     readonly property color textSecondary: "#aaaaaa"
+    readonly property color error: "#ff6b6b"
     readonly property color accent: "#3d7eff"
     readonly property color userBubble: "#2f5d8f"
     readonly property color assistantBubble: "#333333"

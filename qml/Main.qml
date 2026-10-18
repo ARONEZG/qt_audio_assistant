@@ -13,6 +13,7 @@ ApplicationWindow {
     required property Chats chats
     required property Providers providers
     required property NewChat newChat
+    required property ProviderSettings providerSettings
 
     title: qsTr("Audio Assistant")
     visible: true
@@ -31,6 +32,13 @@ ApplicationWindow {
             Layout.margins: Theme.spacingMedium
             providers: window.providers
             onChatRequested: providerId => window.newChat.open(providerId)
+        }
+
+        ProviderSettingsPanel {
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.spacingMedium
+            Layout.rightMargin: Theme.spacingMedium
+            settings: window.providerSettings
         }
 
         ChatGrid {
