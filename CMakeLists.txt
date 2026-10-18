@@ -279,11 +279,18 @@ set_target_properties(miniaudio::miniaudio PROPERTIES
 )
 
 # ── Audio library ───────────────────────────────────────────
-# Thin wrapper that owns the miniaudio implementation translation unit, so the
-# third-party amalgamation is compiled once and the future platform-specific
-# capture code has a single home behind a narrow interface. It contains no
-# capture logic yet — only the implementation compile unit.
+# The audio subsystem. It holds two things:
+#   * the framework-agnostic capture contracts (AudioFormat, AudioSource,
+#     AudioSink) that depend only on the STL, so a consumer or a test can use
+#     them without pulling Qt or any platform code in;
+#   * the miniaudio implementation translation unit, so the third-party
+#     amalgamation is compiled once and the future platform-specific capture
+#     code has a single home behind a narrow interface.
+# Capture logic and the ring buffer are added on top of the contracts later.
 add_library(audio-assistant-audio STATIC
+    src/audio/AudioFormat.cpp
+    src/audio/AudioSink.cpp
+    src/audio/AudioSource.cpp
     src/audio/MiniaudioImplementation.cpp
 )
 
@@ -291,6 +298,14 @@ set_target_properties(audio-assistant-audio PROPERTIES
     CXX_EXTENSIONS OFF
 )
 
+# Consumers include audio headers as "audio/<Header>.h".
+target_include_directories(audio-assistant-audio PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+)
+
+# audio-assistant-qt-warnings is deliberately not linked here: the audio
+# contracts are STL-only and must not inherit Qt/moc-specific suppressions that
+# could hide real diagnostics in future capture code. miniaudio.h stays SYSTEM.
 target_link_libraries(audio-assistant-audio
     PRIVATE audio-assistant-strict miniaudio::miniaudio
 )
@@ -520,6 +535,30 @@ target_link_libraries(tst_audio_smoke PRIVATE
 
 add_test(NAME tst_audio_smoke COMMAND tst_audio_smoke)
 set_tests_properties(tst_audio_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── Audio format test ───────────────────────────────────────
+# Covers the capture-layer value type: construction, invariants, boundaries and
+# comparison. The contracts are STL-only, so no miniaudio header is included
+# here; the link pulls the (private) miniaudio dependency of the library along.
+qt_add_executable(tst_audioformat
+    tests/tst_audioformat.cpp
+)
+
+set_target_properties(tst_audioformat PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_audioformat PRIVATE
+    audio-assistant-strict
+    audio-assistant-audio
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_audioformat COMMAND tst_audioformat)
+set_tests_properties(tst_audioformat PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
