@@ -6,11 +6,17 @@
 #include <QString>
 #include <QUrl>
 #include <QVariant>
+#include <chrono>
 #include <memory>
 #include <vector>
 
+#include "app/AudioCapture.h"
 #include "app/OpenAiCompatibleProvider.h"
+#include "app/OpenAiCompatibleTranscriber.h"
 #include "app/PlaceholderProvider.h"
+#include "audio/AudioBuffer.h"
+#include "audio/AudioFormat.h"
+#include "audio/MiniaudioCaptureSource.h"
 #include "domain/Chats.h"
 #include "domain/NewChat.h"
 #include "domain/ProviderConfigFile.h"
@@ -33,6 +39,25 @@ namespace {
     return QDir(kDirectory).filePath(QStringLiteral("provider.env"));
 }
 
+// Startup configuration: the persisted file with the real environment overriding
+// it per value (the API key is read only from the environment or the user's
+// input, never from the file). A read or key problem is reported and never stops
+// startup.
+[[nodiscard]] ProviderConfigSource::Result resolveStartupConfig(const ProviderConfigFile& file) {
+    const ProviderConfigSource::Result kResult =
+            ProviderConfigSource(file, QProcessEnvironment::systemEnvironment()).resolve();
+    if (!kResult.ok()) {
+        qWarning().noquote() << kResult.error;
+    }
+    if (kResult.apiKey.isEmpty()) {
+        qWarning(
+                "POLZA_API_KEY is not set: set it in the environment or enter it in the provider "
+                "settings panel; until then the OpenAI-compatible provider reports an "
+                "authentication error.");
+    }
+    return kResult;
+}
+
 // Builds the providers offered for selection. The network recipe reads the live
 // settings every time a chat is minted, so a newly saved endpoint/model/key
 // reaches the next chat without rebuilding the list.
@@ -50,6 +75,44 @@ namespace {
     };
 }
 
+// The speech-to-text model is separate from the chat model (POLZA_MODEL): it is
+// read from the environment only with a whisper-1 default, and is deliberately
+// not part of the persisted provider settings.
+[[nodiscard]] QString sttModelFromEnvironment() {
+    const QString kConfigured = QProcessEnvironment::systemEnvironment().value(QStringLiteral("POLZA_STT_MODEL"));
+    return kConfigured.isEmpty() ? QStringLiteral("openai/whisper-1") : kConfigured;
+}
+
+// Starts capture and reports the outcome honestly. A failure is logged, never
+// fatal: without a microphone the app still runs (the conversation UI works).
+// Health is read from the concrete source, so the AudioSource role interface
+// stays unchanged and the facade needs no status of its own.
+void startCapture(audio::MiniaudioCaptureSource& source) {
+    source.start();
+    if (source.lastError().has_value()) {
+        qWarning() << "Audio capture did not start: the microphone is unavailable; the app keeps running";
+    } else {
+        qInfo() << "Audio capture started (16 kHz, mono, f32)";
+    }
+}
+
+// Loads the root QML component and hands the composition objects to it. False
+// means the component could not be created and the caller exits non-zero.
+[[nodiscard]] bool loadMainQml(QQmlApplicationEngine& engine,
+                               Chats& chats,
+                               Providers& providers,
+                               NewChat& newChat,
+                               ProviderSettings& settings) {
+    engine.setInitialProperties({
+            {QStringLiteral("chats"), QVariant::fromValue(&chats)},
+            {QStringLiteral("providers"), QVariant::fromValue(&providers)},
+            {QStringLiteral("newChat"), QVariant::fromValue(&newChat)},
+            {QStringLiteral("providerSettings"), QVariant::fromValue(&settings)},
+    });
+    engine.load(QUrl(QStringLiteral("qrc:/qt/qml/AudioAssistant/Main.qml")));
+    return !engine.rootObjects().isEmpty();
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -61,45 +124,35 @@ int main(int argc, char* argv[]) {
     // convention, mirroring std::lock_guard.
     audio_assistant::log::LogBridge logBridge;  // NOLINT(misc-const-correctness)
 
-    // Composition root. Startup configuration is resolved once from the
-    // persisted file with the real environment overriding it per value; the API
-    // key is read only from the environment or the user's input, never from the
-    // file. After this point the live ProviderSettings object is the single
-    // source the recipes read, so a saved change affects the next minted chat.
+    // Composition root. The live ProviderSettings object is the single source
+    // the provider recipe reads, so a saved change affects the next minted chat.
     const ProviderConfigFile kConfigFile(providerConfigPath());
-    const ProviderConfigSource::Result kStartup =
-            ProviderConfigSource(kConfigFile, QProcessEnvironment::systemEnvironment()).resolve();
-    if (!kStartup.ok()) {
-        qWarning().noquote() << kStartup.error;
-    }
-    if (kStartup.apiKey.isEmpty()) {
-        qWarning(
-                "POLZA_API_KEY is not set: set it in the environment or enter it in the provider "
-                "settings panel; until then the OpenAI-compatible provider reports an "
-                "authentication error.");
-    }
-
-    // Not const: the settings are edited from QML and read through a reference
-    // by the provider recipe below.
+    const ProviderConfigSource::Result kStartup = resolveStartupConfig(kConfigFile);
+    // Not const: edited from QML and read through a reference by the recipe.
     ProviderSettings settings(kStartup.config, kStartup.apiKey, kConfigFile);
     Chats chats;
-    // Not const: both objects are handed to QML by non-const pointer through
-    // setInitialProperties below.
     Providers providers(providerOffers(settings));
     NewChat newChat(chats, providers);
 
+    // The capture pipeline is owned here for the whole event loop; the source
+    // and the facade only borrow the parts. Declaration order is a lifetime
+    // contract: the buffer is declared before the source that writes into it,
+    // and both before the facade that references them.
+    const audio::AudioFormat kCaptureFormat(16000U, 1U, audio::SampleFormat::kFloat32);
+    audio::AudioBuffer captureBuffer(std::chrono::seconds(30), kCaptureFormat);
+    audio::MiniaudioCaptureSource captureSource(captureBuffer);
+    startCapture(captureSource);
+    // The transcriber is built once from the startup configuration. Unlike the
+    // chat provider recipe (which reads the live ProviderSettings at each mint),
+    // it does not pick up an endpoint or key entered in the settings panel until
+    // it is rebuilt; re-reading live settings for speech-to-text belongs to the
+    // increment that wires the capture controls (the facade only relays to the
+    // provider it is handed).
+    OpenAiCompatibleTranscriber transcriber(settings.baseUrl(), settings.apiKey(), sttModelFromEnvironment());
+    // Non-const by convention like the other composition-root objects; its
+    // commands are driven by the global hotkey in a later increment.
+    AudioCapture audioCapture(captureBuffer, captureSource, transcriber);  // NOLINT(misc-const-correctness)
+
     QQmlApplicationEngine engine;
-    engine.setInitialProperties({
-            {QStringLiteral("chats"), QVariant::fromValue(&chats)},
-            {QStringLiteral("providers"), QVariant::fromValue(&providers)},
-            {QStringLiteral("newChat"), QVariant::fromValue(&newChat)},
-            {QStringLiteral("providerSettings"), QVariant::fromValue(&settings)},
-    });
-    engine.load(QUrl(QStringLiteral("qrc:/qt/qml/AudioAssistant/Main.qml")));
-
-    if (engine.rootObjects().isEmpty()) {
-        return -1;
-    }
-
-    return app.exec();
+    return loadMainQml(engine, chats, providers, newChat, settings) ? app.exec() : -1;
 }

@@ -425,6 +425,7 @@ qt_add_qml_module(audio-assistant-domain
 
 # ── Main executable ─────────────────────────────────────────
 add_executable(audio-assistant
+    src/app/AudioCapture.cpp
     src/app/OpenAiCompatibleProvider.cpp
     src/app/OpenAiCompatibleTranscriber.cpp
     src/app/PlaceholderProvider.cpp
@@ -777,6 +778,39 @@ target_link_libraries(tst_transcriber PRIVATE
 
 add_test(NAME tst_transcriber COMMAND tst_transcriber)
 set_tests_properties(tst_transcriber PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── Audio capture facade test ───────────────────────────────
+# Covers the composition facade that ties a source, the ring buffer and a
+# transcriber together: command delegation, the snapshot hand-off into
+# transcribe() and the terminal-signal relay. Both wide interfaces are test
+# doubles, so no device, no network and no real timing are involved.
+#
+# audio-assistant-qt-warnings is linked for the same reason as the other Qt
+# targets: AudioCapture's moc-generated signal dispatcher indexes the signal
+# argument array directly (-Wno-unsafe-buffer-usage), and the fake carries Qt
+# value types (-Wno-padded).
+qt_add_executable(tst_audiocapture
+    tests/tst_audiocapture.cpp
+    src/app/AudioCapture.cpp
+)
+
+set_target_properties(tst_audiocapture PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_audiocapture PRIVATE
+    audio-assistant-strict
+    audio-assistant-qt-warnings
+    audio-assistant-audio
+    audio-assistant-domain
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_audiocapture COMMAND tst_audiocapture)
+set_tests_properties(tst_audiocapture PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 

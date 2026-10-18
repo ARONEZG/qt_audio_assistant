@@ -1,9 +1,12 @@
 ---
 # Qt Test assertion macros (QCOMPARE/QVERIFY/...) expand to several statements
 # each, so an ordinary test function blows past the shared readability-function-
-# size thresholds even when it is only a handful of source lines. Inherit every
-# other check from the repository config and relax only the size heuristic here.
+# size thresholds even when it is only a handful of source lines. The waiting
+# macros (QTRY_*) additionally expand into nested loops and branches, which
+# pushes a one-line wait past the nesting threshold. Inherit every other check
+# from the repository config and relax only the size heuristic here.
 InheritParentConfig: true
 CheckOptions:
   readability-function-size.LineThreshold: 200
   readability-function-size.StatementThreshold: 200
+  readability-function-size.NestingThreshold: 8
