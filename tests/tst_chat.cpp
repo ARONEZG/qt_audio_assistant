@@ -26,6 +26,18 @@ QString errorTextAfterFailure(ProviderError error, const QString& detail) {
     return chat.errorText();
 }
 
+// Mirrors SafeMarkdown's invariant: no '<' may reach a renderer unescaped.
+[[nodiscard]] bool hasUnescapedAngleBracket(const QString& markdown) {
+    int precedingBackslashes = 0;
+    for (const QChar kCharacter : markdown) {
+        if (kCharacter == QLatin1Char('<') && precedingBackslashes % 2 == 0) {
+            return true;
+        }
+        precedingBackslashes = kCharacter == QLatin1Char('\\') ? precedingBackslashes + 1 : 0;
+    }
+    return false;
+}
+
 }  // namespace
 
 class TestChat : public QObject {
@@ -60,6 +72,9 @@ private slots:
     void test_modelInsertsReplyRow();
     void test_modelIgnoresUnknownRoleAndOutOfRangeRow();
     void test_streamingTextIsNotAModelRow();
+    void test_markupRoleKeepsUserTextVerbatim();
+    void test_markupRoleSanitisesAssistantText();
+    void test_streamingMarkupSanitisesLiveAnswer();
 };
 
 TestChat::TestChat(QObject* parent) : QObject(parent) {
@@ -406,6 +421,7 @@ void TestChat::test_modelExposesMessageRoles() {
 
     QCOMPARE(chat.roleNames().value(Chat::kTextRole), QByteArrayLiteral("text"));
     QCOMPARE(chat.roleNames().value(Chat::kIsUserRole), QByteArrayLiteral("isUser"));
+    QCOMPARE(chat.roleNames().value(Chat::kMarkupRole), QByteArrayLiteral("markup"));
     QCOMPARE(chat.data(chat.index(0), Chat::kTextRole).toString(), QStringLiteral("hi"));
     QCOMPARE(chat.data(chat.index(0), Chat::kIsUserRole).toBool(), true);
     QCOMPARE(chat.data(chat.index(1), Chat::kTextRole).toString(), QStringLiteral("hello"));
@@ -449,6 +465,7 @@ void TestChat::test_modelIgnoresUnknownRoleAndOutOfRangeRow() {
     QVERIFY(!chat.data(chat.index(0), Qt::DisplayRole).isValid());
     QVERIFY(!chat.data(QModelIndex(), Chat::kTextRole).isValid());
     QVERIFY(!chat.data(chat.index(1), Chat::kTextRole).isValid());
+    QVERIFY(!chat.data(chat.index(1), Chat::kMarkupRole).isValid());
     QCOMPARE(chat.rowCount(chat.index(0)), 0);
 }
 
@@ -467,6 +484,49 @@ void TestChat::test_streamingTextIsNotAModelRow() {
     QCOMPARE(chat.streamingText(), QStringLiteral("partial"));
 }
 
-QTEST_GUILESS_MAIN(TestChat)
+void TestChat::test_markupRoleKeepsUserTextVerbatim() {
+    auto provider = std::make_unique<FakeProvider>();
+    Chat chat(std::move(provider));
+
+    // A user's own message is shown as plain text, so it must reach the view
+    // exactly as typed - Markdown-looking characters are not rewritten.
+    chat.send(QStringLiteral("<b>hi</b> **not bold**"));
+
+    QCOMPARE(chat.data(chat.index(0), Chat::kMarkupRole).toString(), QStringLiteral("<b>hi</b> **not bold**"));
+}
+
+void TestChat::test_markupRoleSanitisesAssistantText() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+    fake->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("**bold** <script>x</script>")));
+
+    const QString kMarkup = chat.data(chat.index(1), Chat::kMarkupRole).toString();
+
+    // The assistant's Markdown is rendered, but its HTML never reaches the view.
+    QVERIFY(kMarkup.contains(QStringLiteral("**bold**")));
+    QVERIFY(!hasUnescapedAngleBracket(kMarkup));
+}
+
+void TestChat::test_streamingMarkupSanitisesLiveAnswer() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("hi"));
+
+    fake->lastAnswer()->appendChunk(QStringLiteral("**bold** <img src=x>"));
+
+    // The raw streaming text is kept for tests/telemetry, while the display
+    // property is the sanitised Markdown the streaming tail renders.
+    QCOMPARE(chat.streamingText(), QStringLiteral("**bold** <img src=x>"));
+    const QString kMarkup = chat.streamingMarkup();
+    QVERIFY(kMarkup.contains(QStringLiteral("**bold**")));
+    QVERIFY(!hasUnescapedAngleBracket(kMarkup));
+}
+
+// The chat model exposes sanitised Markdown (SafeMarkdown), which uses
+// QTextDocument and therefore needs a QGuiApplication (QTEST_MAIN, offscreen).
+QTEST_MAIN(TestChat)
 
 #include "tst_chat.moc"

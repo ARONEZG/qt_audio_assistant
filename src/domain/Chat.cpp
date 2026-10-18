@@ -4,6 +4,8 @@
 #include <optional>
 #include <utility>
 
+#include "domain/SafeMarkdown.h"
+
 namespace {
 
 // One user-facing line for a typed failure. The summary names the kind of
@@ -70,6 +72,14 @@ QVariant Chat::data(const QModelIndex& index, int role) const {
     if (role == kIsUserRole) {
         return message.isUser();
     }
+    if (role == kMarkupRole) {
+        // The user writes plain text and it is shown verbatim; the assistant's
+        // text is untrusted, so it is neutralised before the view can render it.
+        if (message.isUser()) {
+            return message.text();
+        }
+        return SafeMarkdown(message.text()).text();
+    }
     return {};
 }
 
@@ -80,6 +90,7 @@ QHash<int, QByteArray> Chat::roleNames() const {
     QHash<int, QByteArray> roles;
     roles.insert(kTextRole, QByteArrayLiteral("text"));
     roles.insert(kIsUserRole, QByteArrayLiteral("isUser"));
+    roles.insert(kMarkupRole, QByteArrayLiteral("markup"));
     return roles;
 }
 
@@ -89,6 +100,12 @@ const std::vector<Message>& Chat::messages() const noexcept {
 
 QString Chat::streamingText() const {
     return streamingText_;
+}
+
+QString Chat::streamingMarkup() const {
+    // The live reply is assistant content too: sanitise it so the streaming tail
+    // is rendered through the same boundary as the finished message.
+    return SafeMarkdown(streamingText_).text();
 }
 
 bool Chat::isStreaming() const noexcept {

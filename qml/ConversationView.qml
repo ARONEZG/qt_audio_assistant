@@ -36,9 +36,13 @@ Item {
         Text {
             id: streamingTail
 
+            objectName: "streamingTail"
             Layout.fillWidth: true
             visible: root.chat.streaming
-            text: root.chat.streamingText
+            text: root.chat.streamingMarkup
+            // The live reply is assistant content: rendered as Markdown through
+            // the same C++ sanitisation boundary as a finished message.
+            textFormat: Text.MarkdownText
             color: Theme.textSecondary
             font.pixelSize: Theme.fontSizeBody
             wrapMode: Text.Wrap

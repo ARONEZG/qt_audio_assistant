@@ -41,6 +41,9 @@ class Chat : public QAbstractListModel {
     Q_PROPERTY(QString providerId READ providerId CONSTANT)
     Q_PROPERTY(QString providerName READ providerName CONSTANT)
     Q_PROPERTY(QString streamingText READ streamingText NOTIFY streamingTextChanged)
+    // The live reply as sanitised Markdown, so the streaming tail renders it
+    // through the same safety boundary as the finished message (SafeMarkdown).
+    Q_PROPERTY(QString streamingMarkup READ streamingMarkup NOTIFY streamingTextChanged)
     Q_PROPERTY(bool streaming READ isStreaming NOTIFY stateChanged)
     // Last failed request, presented to the user. Transient like streamingText:
     // an accepted send() starts a new request and clears it. Cancellation is not
@@ -55,6 +58,11 @@ public:
     enum Role : std::uint16_t {
         kTextRole = static_cast<std::uint16_t>(Qt::UserRole) + 1,
         kIsUserRole,
+        // Display-ready text: the assistant's Markdown is neutralised in C++
+        // (SafeMarkdown), while the user's own text is passed through verbatim
+        // because a view shows it as plain text. The raw `text` role stays for
+        // accessibility, so a screen reader never reads Markdown escapes.
+        kMarkupRole,
     };
 
     // Takes ownership of the provider. The provider must not be null.
@@ -67,6 +75,7 @@ public:
 
     [[nodiscard]] const std::vector<Message>& messages() const noexcept;
     [[nodiscard]] QString streamingText() const;
+    [[nodiscard]] QString streamingMarkup() const;
     [[nodiscard]] bool isStreaming() const noexcept;
     [[nodiscard]] QString errorText() const;
     [[nodiscard]] bool hasError() const noexcept;
