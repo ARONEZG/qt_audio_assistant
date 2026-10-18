@@ -142,6 +142,12 @@ int main(int argc, char* argv[]) {
     audio::AudioBuffer captureBuffer(std::chrono::seconds(30), kCaptureFormat);
     audio::MiniaudioCaptureSource captureSource(captureBuffer);
     startCapture(captureSource);
+    // The transcriber is built once from the startup configuration. Unlike the
+    // chat provider recipe (which reads the live ProviderSettings at each mint),
+    // it does not pick up an endpoint or key entered in the settings panel until
+    // it is rebuilt; re-reading live settings for speech-to-text belongs to the
+    // increment that wires the capture controls (the facade only relays to the
+    // provider it is handed).
     OpenAiCompatibleTranscriber transcriber(settings.baseUrl(), settings.apiKey(), sttModelFromEnvironment());
     // Non-const by convention like the other composition-root objects; its
     // commands are driven by the global hotkey in a later increment.

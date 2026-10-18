@@ -36,8 +36,18 @@ class TranscriptionProvider;
 // it owns (MiniaudioCaptureSource::lastError()) rather than through this facade.
 // Keeping the status out here is what avoids widening the AudioSource contract.
 //
+// Configuration of the transcriber (endpoint, key, model) is fixed when the
+// composition root builds it and is *not* re-read per request: the facade holds
+// the injected provider by reference and never rebuilds it. Re-reading live
+// provider settings for speech-to-text - the way the chat recipe reads
+// ProviderSettings at each mint - is the composition root's decision and belongs
+// to the increment that wires the capture controls; until then the STT
+// endpoint/key are the ones resolved at startup.
+//
 // A transcribe request hands the transcriber an independent copy of the buffer's
-// current contents; the facade holds no audio of its own.
+// current contents; the facade holds no audio of its own. An empty buffer is
+// still sent as an empty block: whether an empty request is meaningful (a real
+// backend may reject it) is the transcriber's decision, not the facade's.
 class AudioCapture : public QObject {
     Q_OBJECT
     Q_DISABLE_COPY_MOVE(AudioCapture)
@@ -60,6 +70,7 @@ public:
     // Sends a snapshot of the whole buffer to the transcriber. The terminal
     // result arrives later through transcribed()/failed() (the
     // TranscriptionProvider contract: transcribe() never emits synchronously).
+    // An empty buffer is sent as an empty block rather than skipped.
     void transcribeLast();
 
     // The stream format of the injected source; a pure query.

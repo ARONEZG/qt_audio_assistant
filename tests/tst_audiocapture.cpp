@@ -87,10 +87,15 @@ public:
     void transcribe(std::vector<float> samples) override {
         lastSamples_ = std::move(samples);
         ++callCount_;
-        // The queued string invocation defers to the event loop without
-        // allocating a callable on the heap (which clang-analyzer misreports as
-        // a leak); the terminal signal is emitted from emitPendingResult().
-        QMetaObject::invokeMethod(this, "emitPendingResult", Qt::QueuedConnection);
+        // Queued so the terminal signal is never emitted synchronously inside
+        // transcribe() (the TranscriptionProvider contract); a pointer to the
+        // member keeps the slot name compile-time checked.
+        //
+        // The analyzer's NewDeleteLeaks here is a false positive: Qt owns the
+        // callable inside the posted QMetaCallEvent and frees it after delivery,
+        // which the analyzer cannot see through the event queue.
+        // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
+        QMetaObject::invokeMethod(this, &FakeTranscriber::emitPendingResult, Qt::QueuedConnection);
     }
 
     // Configures the outcome the queued emission reports.

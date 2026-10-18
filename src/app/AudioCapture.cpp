@@ -31,7 +31,9 @@ void AudioCapture::stop() {
 
 void AudioCapture::transcribeLast() {
     // snapshot() returns an independent copy, so the transcriber owns the block
-    // it is handed and the capture callback keeps writing into the buffer.
+    // it is handed and the capture callback keeps writing into the buffer. An
+    // empty buffer produces an empty block: it is still a request, and whether
+    // the backend accepts it is the backend's decision.
     transcriber_.transcribe(buffer_.snapshot());
 }
 
