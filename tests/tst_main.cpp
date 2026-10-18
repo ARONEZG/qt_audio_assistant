@@ -20,6 +20,7 @@
 #include "domain/Message.h"
 #include "domain/NewChat.h"
 #include "domain/ProviderConfigFile.h"
+#include "domain/ProviderError.h"
 #include "domain/ProviderOffer.h"
 #include "domain/ProviderSettings.h"
 #include "domain/Providers.h"
@@ -148,6 +149,7 @@ private slots:
     void test_addChatButtonCreatesAChat();
     void test_sendButtonForwardsTypedTextToTheChat();
     void test_streamingTailShowsTheLiveReply();
+    void test_chatFailureShowsTheError();
     void test_providerSettingsFieldsAreBound();
     void test_apiKeyFieldIsMasked();
     void test_saveButtonPersistsProviderSettings();
@@ -216,6 +218,33 @@ void TestQmlChat::test_streamingTailShowsTheLiveReply() {
     harness.minted().at(0)->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("Hello")));
     QCOMPARE(chat->rowCount(), 2);
     QCOMPARE(chat->streamingText(), QString());
+}
+
+void TestQmlChat::test_chatFailureShowsTheError() {
+    Harness harness;
+    QVERIFY(harness.newChat().open(QStringLiteral("fake")) != nullptr);
+    QCoreApplication::processEvents();
+    QObject* errorLabel = harness.child(QStringLiteral("chatError"));
+    QVERIFY(errorLabel != nullptr);
+    QCOMPARE(errorLabel->property("visible").toBool(), false);
+
+    Chat* chat = harness.chats().at(0);
+    chat->send(QStringLiteral("hi"));
+    harness.minted().at(0)->lastAnswer()->fail(ProviderError::kAuthentication, QStringLiteral("invalid key"));
+    QCoreApplication::processEvents();
+
+    // The panel only mirrors the chat's state: the failure text and visibility
+    // come from the C++ properties, not from logic in the view.
+    QCOMPARE(chat->hasError(), true);
+    QCOMPARE(errorLabel->property("visible").toBool(), true);
+    QCOMPARE(errorLabel->property("text").toString(), chat->errorText());
+    QVERIFY(errorLabel->property("text").toString().contains(QStringLiteral("invalid key")));
+
+    // A new request clears the error in C++, and the view follows.
+    chat->send(QStringLiteral("retry"));
+    QCoreApplication::processEvents();
+    QCOMPARE(errorLabel->property("visible").toBool(), false);
+    QCOMPARE(errorLabel->property("text").toString(), QString());
 }
 
 void TestQmlChat::test_providerSettingsFieldsAreBound() {

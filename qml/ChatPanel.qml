@@ -59,6 +59,20 @@ Rectangle {
             chat: root.chat
         }
 
+        // A failed request is reported next to the composer: the chat exposes
+        // the already-formatted reason and the view only mirrors it.
+        Text {
+            objectName: "chatError"
+            Layout.fillWidth: true
+            visible: root.chat.hasError
+            text: root.chat.errorText
+            color: Theme.error
+            font.pixelSize: Theme.fontSizeSmall
+            wrapMode: Text.Wrap
+            Accessible.role: Accessible.StaticText
+            Accessible.name: root.chat.errorText
+        }
+
         Composer {
             Layout.fillWidth: true
             busy: root.chat.streaming
