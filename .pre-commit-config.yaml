@@ -48,16 +48,25 @@ repos:
         pass_filenames: false
         types: [c++]
 
-      # qmlformat: project QML files
+      # qmlformat: project QML files. Uses the Qt the module is built against
+      # (see static-analysis.sh): the distro qt6-tools are 6.4.2 and their
+      # formatter garbles `pragma ComponentBehavior: Bound`, so they would flag
+      # correctly formatted Qt 6 QML.
       - id: qmlformat
         name: "qmlformat"
         entry: >
           bash -c '
+            QMLFORMAT="/usr/lib/qt6/bin/qmlformat";
+            for prefix in "$HOME/Qt/6.8.3/gcc_64" "${QTDIR:-}" /opt/Qt/6.8.3/gcc_64; do
+              if [ -n "$prefix" ] && [ -x "$prefix/bin/qmlformat" ]; then
+                QMLFORMAT="$prefix/bin/qmlformat"; break;
+              fi;
+            done;
             FILES=$(git diff --cached --name-only --diff-filter=ACMR |
                     grep -E "\.qml$" || true);
             TMP=$(mktemp);
             for f in $FILES; do
-              /usr/lib/qt6/bin/qmlformat "$f" > "$TMP";
+              "$QMLFORMAT" "$f" > "$TMP";
               diff -q "$f" "$TMP" || { echo "qmlformat would modify $f"; exit 1; };
             done;
             rm -f "$TMP"'

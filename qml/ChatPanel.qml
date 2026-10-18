@@ -13,6 +13,7 @@ Rectangle {
 
     required property Chat chat
 
+    objectName: "chatPanel"
     implicitWidth: Theme.panelMinimumWidth
     implicitHeight: Theme.panelMinimumHeight
     color: Theme.surface

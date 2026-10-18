@@ -1,5 +1,6 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
-import QtQuick.Layouts
 import AudioAssistant
 
 // The transcript of one chat: the finished messages plus the live streaming
@@ -7,47 +8,63 @@ import AudioAssistant
 // Public API: `chat`, the Chat this view presents. The messages come from the
 // Chat itself (it is the message model); the streaming text and state come from
 // its properties.
+//
+// The live tail is the list's footer, not a sibling of it: a reasoning answer is
+// far taller than the panel, so as a sibling Text it grew past the panel and
+// painted over its neighbours. As the last row of the clipped, scrolling
+// transcript the tail is bounded by the view that owns it.
 Item {
     id: root
 
     required property Chat chat
 
-    ColumnLayout {
+    ListView {
+        id: transcript
+
+        objectName: "transcript"
         anchors.fill: parent
+        model: root.chat
         spacing: Theme.spacingTight
+        clip: true
+        delegate: MessageDelegate {
+            width: transcript.width
+        }
+        Accessible.name: qsTr("Conversation")
 
-        ListView {
-            id: transcript
+        // The in-flight answer, shown as the last row of the transcript. A
+        // hidden footer still reserves its height in the view, so the container
+        // collapses to nothing between answers instead of leaving a gap.
+        footer: Item {
+            id: tailContainer
 
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            model: root.chat
-            spacing: Theme.spacingTight
-            clip: true
-            delegate: MessageDelegate {
-                width: ListView.view.width
+            width: transcript.width
+            height: streamingTail.visible ? streamingTail.implicitHeight + Theme.spacingTight : 0
+
+            Text {
+                id: streamingTail
+
+                objectName: "streamingTail"
+                y: Theme.spacingTight
+                width: parent.width
+                visible: root.chat.streaming
+                text: root.chat.streamingMarkup
+                // The live reply is assistant content: rendered as Markdown
+                // through the same C++ sanitisation boundary as a finished
+                // message.
+                textFormat: Text.MarkdownText
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeBody
+                wrapMode: Text.Wrap
+                Accessible.role: Accessible.StaticText
+                Accessible.name: qsTr("Assistant is replying")
             }
-            Accessible.name: qsTr("Conversation")
-
-            // Keep the newest message visible as the history grows.
-            onCountChanged: transcript.positionViewAtEnd()
         }
 
-        Text {
-            id: streamingTail
-
-            objectName: "streamingTail"
-            Layout.fillWidth: true
-            visible: root.chat.streaming
-            text: root.chat.streamingMarkup
-            // The live reply is assistant content: rendered as Markdown through
-            // the same C++ sanitisation boundary as a finished message.
-            textFormat: Text.MarkdownText
-            color: Theme.textSecondary
-            font.pixelSize: Theme.fontSizeBody
-            wrapMode: Text.Wrap
-            Accessible.role: Accessible.StaticText
-            Accessible.name: qsTr("Assistant is replying")
-        }
+        // Keep the newest content visible: a new message, every growth of the
+        // streaming tail and every resize of the view (the tail is the last row,
+        // so it scrolls into view with the rest of the transcript).
+        onCountChanged: positionViewAtEnd()
+        onContentHeightChanged: positionViewAtEnd()
+        onHeightChanged: positionViewAtEnd()
     }
 }
