@@ -7,6 +7,7 @@
 #include <QUrl>
 #include <QVariant>
 #include <chrono>
+#include <exception>
 #include <memory>
 #include <vector>
 
@@ -154,6 +155,32 @@ void wireTranscriberSettings(ProviderSettings& settings,
                       << "model=" << sttModel;
 }
 
+// The optional VAD pipeline: the Silero detector (model from the embedded Qt
+// resource) and the speech gate that trims silence. Both are owned by this
+// object, which the caller keeps alive for the whole event loop (the gate
+// borrows the detector; AudioCapture borrows the gate). A null gate means VAD
+// is disabled.
+struct VadPipeline {
+    std::unique_ptr<audio::SileroVoiceActivityDetector> detector;
+    std::unique_ptr<audio::VadSpeechGate> gate;
+};
+
+// Builds the VAD pipeline. Graceful degradation: a missing resource or
+// onnxruntime failure is logged and yields an empty pipeline — capture and
+// transcription then work without the gate, exactly like an unavailable
+// microphone is reported instead of aborting the process.
+[[nodiscard]] VadPipeline createVadPipeline() {
+    try {
+        auto detector = std::make_unique<audio::SileroVoiceActivityDetector>();
+        auto gate = std::make_unique<audio::VadSpeechGate>(*detector,
+                                                           audio::SpeechSegmenter::Parameters{0.5F, 0.15F, 8, 4});
+        return {std::move(detector), std::move(gate)};
+    } catch (const std::exception& error) {
+        qWarning() << "Voice activity detection disabled:" << error.what();
+        return {};
+    }
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -198,10 +225,12 @@ int main(int argc, char* argv[]) {
     // through ":models/silero_vad/silero_vad.onnx" and is never downloaded.
     // The detector and gate are declared before the facade they feed and live
     // for the whole event loop (lifetime contract, same as captureBuffer).
-    audio::SileroVoiceActivityDetector vadDetector;
-    audio::VadSpeechGate vadGate(vadDetector, {0.5F, 0.15F, 8, 4});
+    const VadPipeline kVad = createVadPipeline();
+
     AudioCapture audioCapture(captureBuffer, captureSource, transcriber);
-    audioCapture.setVadGate(vadGate);
+    if (kVad.gate != nullptr) {
+        audioCapture.setVadGate(*kVad.gate);
+    }
     wireTranscriberSettings(settings, transcriber, kSttModel);
 
     // The chat's capture switch drives the pipeline. Capture does not start at

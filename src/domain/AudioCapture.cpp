@@ -59,7 +59,9 @@ void AudioCapture::transcribeLast() {
     // classifies the same canonical stream the buffer holds (freshly, from the
     // snapshot), so its intervals map 1:1 onto the snapshot.
     if (vadGate_ != nullptr && !snapshot.empty()) {
+        const std::size_t kCapturedSamples = snapshot.size();
         snapshot = vadGate_->trimSilence(std::span<const float>(snapshot));
+        qInfo() << "VAD kept" << snapshot.size() << "of" << kCapturedSamples << "samples";
     }
 
     transcriber_.transcribe(std::move(snapshot));

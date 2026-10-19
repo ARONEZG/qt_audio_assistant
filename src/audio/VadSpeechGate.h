@@ -31,6 +31,12 @@ namespace audio {
 //
 // This class is pure C++/STL (no Qt, no ONNX); the VoiceActivityDetector is an
 // injected role, so tests use a deterministic double.
+//
+// Public API note: production only calls trimSilence(). feedSamples(),
+// intervals(), keepMask() and consumedSamples() form a deliberate seam for
+// streaming segmentation (feed blocks as they arrive, query the mask) and for
+// the deterministic tests; they are intentionally kept public rather than
+// hidden, so the streaming path can be built without reshaping the class.
 class VadSpeechGate {
 public:
     // Non-copyable and non-movable: the gate borrows the detector and owns
@@ -68,6 +74,12 @@ public:
     // (concatenated in chronological order). An empty result means the block
     // contained no speech (or every detected run was shorter than minSpeech).
     // This is the main integration point with AudioCapture::transcribeLast().
+    //
+    // Limitation: the intervals are concatenated with all silence between them
+    // removed, so two phrases separated by a pause longer than minSilenceFrames
+    // arrive back-to-back ([phrase1][phrase2]) with no separator. That is the
+    // intended "trim silence" behaviour, not "select the last question"; the
+    // latter (keep only the final interval) is a deliberate next step.
     [[nodiscard]] std::vector<float> trimSilence(std::span<const float> samples);
 
     // The number of PCM samples consumed by feedSamples() so far, including the

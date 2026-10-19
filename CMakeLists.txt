@@ -107,22 +107,27 @@ if(DEFINED CONAN_BUILD_DIR)
             set(_conan_build_type "Debug")
         endif()
 
-        # The in-repo LLMQore recipe must be in the Conan cache before the
-        # package can be resolved/built; --build=missing below then produces it.
-        message(STATUS "Conan export recipes/llmqore (automatic)")
-        execute_process(
-            COMMAND "${_conan_exe}" export "${CMAKE_CURRENT_SOURCE_DIR}/recipes/llmqore"
-            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-            RESULT_VARIABLE _conan_export_result
-            OUTPUT_VARIABLE _conan_export_out
-            ERROR_VARIABLE _conan_export_err
-        )
-        if(NOT _conan_export_result EQUAL 0)
-            message(FATAL_ERROR
-                "Automatic 'conan export recipes/llmqore' failed.\n"
-                "${_conan_export_out}\n${_conan_export_err}"
+        # Every in-repo recipe must be in the Conan cache before the packages can
+        # be resolved; --build=missing below then produces them. Both are in-repo
+        # (llmqore for the LLM client, onnxruntime for the Silero VAD runtime):
+        # ConanCenter's onnxruntime/1.24.4 does not compile with Clang 18 without
+        # the patch carried by recipes/onnxruntime (docs/ADR-vad.md).
+        foreach(_conan_recipe llmqore onnxruntime)
+            message(STATUS "Conan export recipes/${_conan_recipe} (automatic)")
+            execute_process(
+                COMMAND "${_conan_exe}" export "${CMAKE_CURRENT_SOURCE_DIR}/recipes/${_conan_recipe}"
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                RESULT_VARIABLE _conan_export_result
+                OUTPUT_VARIABLE _conan_export_out
+                ERROR_VARIABLE _conan_export_err
             )
-        endif()
+            if(NOT _conan_export_result EQUAL 0)
+                message(FATAL_ERROR
+                    "Automatic 'conan export recipes/${_conan_recipe}' failed.\n"
+                    "${_conan_export_out}\n${_conan_export_err}"
+                )
+            endif()
+        endforeach()
 
         message(STATUS "Conan install (automatic, build_type=${_conan_build_type})")
         execute_process(
