@@ -16,6 +16,8 @@
 #include "audio/AudioBuffer.h"
 #include "audio/AudioFormat.h"
 #include "audio/MiniaudioCaptureSource.h"
+#include "audio/SileroVoiceActivityDetector.h"
+#include "audio/VadSpeechGate.h"
 #include "domain/AudioCapture.h"
 #include "domain/Chat.h"
 #include "domain/Chats.h"
@@ -190,7 +192,16 @@ int main(int argc, char* argv[]) {
     audio::MiniaudioCaptureSource captureSource(captureBuffer);
     const QString kSttModel = sttModelFromEnvironment();
     OpenAiCompatibleTranscriber transcriber(settings.baseUrl(), settings.apiKey(), kSttModel);
+
+    // The VAD pipeline trims silence before transcription. The Silero model is
+    // an embedded Qt resource (audio-assistant-models); the detector reads it
+    // through ":models/silero_vad/silero_vad.onnx" and is never downloaded.
+    // The detector and gate are declared before the facade they feed and live
+    // for the whole event loop (lifetime contract, same as captureBuffer).
+    audio::SileroVoiceActivityDetector vadDetector;
+    audio::VadSpeechGate vadGate(vadDetector, {0.5F, 0.15F, 8, 4});
     AudioCapture audioCapture(captureBuffer, captureSource, transcriber);
+    audioCapture.setVadGate(vadGate);
     wireTranscriberSettings(settings, transcriber, kSttModel);
 
     // The chat's capture switch drives the pipeline. Capture does not start at

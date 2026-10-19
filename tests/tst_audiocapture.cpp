@@ -18,14 +18,23 @@
 
 #include "FakeAudioSource.h"
 #include "FakeTranscriber.h"
+#include "FakeVoiceActivityDetector.h"
 #include "audio/AudioBuffer.h"
 #include "audio/AudioFormat.h"
+#include "audio/SpeechSegmenter.h"
+#include "audio/VadSpeechGate.h"
 #include "domain/AudioCapture.h"
 #include "domain/ProviderError.h"
 
 namespace {
 
+// The ring buffer capacity used by the delegation tests: 100 ms at the
+// canonical 16 kHz stream (1600 samples).
 constexpr auto kBufferDuration = std::chrono::milliseconds{100};
+
+// The VAD tests need the full synthetic window to survive the ring buffer, so
+// they use a generously large duration (1 s = 16000 samples) instead.
+constexpr auto kVadBufferDuration = std::chrono::seconds{1};
 
 }  // namespace
 
@@ -46,6 +55,9 @@ private slots:
     void test_failedTranscriptionExposesErrorText();
     void test_newTranscribeClearsTheError();
     void test_cancelledFailureLeavesNoError();
+    void test_vadGateTrimsSilenceBeforeTranscription();
+    void test_vadGateWithNoSpeechStillTranscribesEmpty();
+    void test_noVadGateSendsWholeBuffer();
 };
 
 TestAudioCapture::TestAudioCapture(QObject* parent) : QObject(parent) {
@@ -204,6 +216,69 @@ void TestAudioCapture::test_cancelledFailureLeavesNoError() {
     QTRY_COMPARE(kFailedSpy.count(), 1);
     QCOMPARE(capture.hasError(), false);
     QCOMPARE(capture.errorText(), QString());
+}
+
+// With a VAD gate attached, only the samples inside the detected speech
+// intervals reach the transcriber (the surrounding silence is trimmed).
+void TestAudioCapture::test_vadGateTrimsSilenceBeforeTranscription() {
+    audio::AudioBuffer buffer(kVadBufferDuration, canonicalFormat());
+    FakeAudioSource source;
+    FakeTranscriber transcriber;
+    AudioCapture capture(buffer, source, transcriber);
+    FakeVoiceActivityDetector detector;
+    audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 2, 2});
+    capture.setVadGate(gate);
+
+    // 6 frames of sound in the buffer: silence, speech, speech, silence...
+    // The detector says frames 1..2 are speech, the rest silence.
+    detector.setSequence({0.05F, 0.9F, 0.9F, 0.05F, 0.05F, 0.05F});
+    buffer.write(std::vector<float>(6 * std::size_t{512}, 0.5F));
+
+    capture.transcribeLast();
+
+    QTRY_COMPARE(transcriber.callCount(), 1);
+    // Only the two speech frames survive: exactly 1024 samples.
+    QCOMPARE(transcriber.lastSamples().size(), std::size_t{1024});
+    for (const float kSample : transcriber.lastSamples()) {
+        QCOMPARE(kSample, 0.5F);
+    }
+}
+
+// When VAD finds no speech, the transcriber still receives a request (an empty
+// block, matching the empty-buffer behaviour) rather than being skipped.
+void TestAudioCapture::test_vadGateWithNoSpeechStillTranscribesEmpty() {
+    audio::AudioBuffer buffer(kVadBufferDuration, canonicalFormat());
+    FakeAudioSource source;
+    FakeTranscriber transcriber;
+    AudioCapture capture(buffer, source, transcriber);
+    FakeVoiceActivityDetector detector;
+    audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 2, 2});
+    capture.setVadGate(gate);
+
+    detector.setConstant(0.05F);
+    buffer.write(std::vector<float>(4 * std::size_t{512}, 0.1F));
+
+    capture.transcribeLast();
+
+    QTRY_COMPARE(transcriber.callCount(), 1);
+    QVERIFY(transcriber.lastSamples().empty());
+}
+
+// Without a gate the historical behaviour holds: the whole buffer is handed to
+// the transcriber unchanged.
+void TestAudioCapture::test_noVadGateSendsWholeBuffer() {
+    audio::AudioBuffer buffer(kVadBufferDuration, canonicalFormat());
+    FakeAudioSource source;
+    FakeTranscriber transcriber;
+    AudioCapture capture(buffer, source, transcriber);
+
+    const std::vector<float> kFrames(3 * std::size_t{512}, 0.5F);
+    buffer.write(kFrames);
+
+    capture.transcribeLast();
+
+    QTRY_COMPARE(transcriber.callCount(), 1);
+    QVERIFY(transcriber.lastSamples() == kFrames);
 }
 
 QTEST_GUILESS_MAIN(TestAudioCapture)

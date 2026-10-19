@@ -2,9 +2,12 @@
 
 #include <QDebug>
 #include <optional>
+#include <span>
+#include <vector>
 
 #include "audio/AudioBuffer.h"
 #include "audio/AudioSource.h"
+#include "audio/VadSpeechGate.h"
 #include "domain/ProviderErrorText.h"
 #include "domain/TranscriptionProvider.h"
 
@@ -22,6 +25,10 @@ AudioCapture::AudioCapture(audio::AudioBuffer& buffer,
 }
 
 AudioCapture::~AudioCapture() = default;
+
+void AudioCapture::setVadGate(audio::VadSpeechGate& gate) {
+    vadGate_ = &gate;
+}
 
 void AudioCapture::start() {
     source_.start();
@@ -46,6 +53,15 @@ void AudioCapture::transcribeLast() {
                 static_cast<double>(snapshot.size()) / static_cast<double>(source_.format().sampleRate());
         qInfo() << "Transcribing" << snapshot.size() << "samples (" << kSeconds << "s)";
     }
+
+    // When a VAD gate is attached, trim the silence: the transcriber only
+    // receives the samples inside the detected speech intervals. The gate
+    // classifies the same canonical stream the buffer holds (freshly, from the
+    // snapshot), so its intervals map 1:1 onto the snapshot.
+    if (vadGate_ != nullptr && !snapshot.empty()) {
+        snapshot = vadGate_->trimSilence(std::span<const float>(snapshot));
+    }
+
     transcriber_.transcribe(std::move(snapshot));
 }
 

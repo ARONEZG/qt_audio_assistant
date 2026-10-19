@@ -297,6 +297,19 @@ set_target_properties(SQLite::SQLite3 PROPERTIES
     INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${SQLite3_INCLUDE_DIRS}"
 )
 
+# ── onnxruntime (voice activity detection) ─────────────────
+# onnxruntime is a managed Conan dependency (onnxruntime/1.24.4 in conanfile.py,
+# provided by the in-repo recipe recipes/onnxruntime) — the single source of
+# truth for its version. It runs the Silero VAD model (silero_vad.onnx,
+# embedded as a Qt resource) to detect speech in the canonical capture stream.
+# Its headers are third-party code: repeated as INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+# so the -Weverything -Werror profile does not report diagnostics inside them.
+find_package(onnxruntime REQUIRED)
+
+set_target_properties(onnxruntime::onnxruntime PROPERTIES
+    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${onnxruntime_INCLUDE_DIRS}"
+)
+
 # ── Audio library ───────────────────────────────────────────
 # The audio subsystem. It holds three things:
 #   * the framework-agnostic capture contracts (AudioFormat, AudioSource,
@@ -317,6 +330,10 @@ add_library(audio-assistant-audio STATIC
     src/audio/AudioSource.cpp
     src/audio/MiniaudioCaptureSource.cpp
     src/audio/MiniaudioImplementation.cpp
+    src/audio/SileroVoiceActivityDetector.cpp
+    src/audio/SpeechSegmenter.cpp
+    src/audio/VadSpeechGate.cpp
+    src/audio/VoiceActivityDetector.cpp
     src/audio/WavEncoder.cpp
 )
 
@@ -332,8 +349,42 @@ target_include_directories(audio-assistant-audio PUBLIC
 # audio-assistant-qt-warnings is deliberately not linked here: the audio
 # contracts are STL-only and must not inherit Qt/moc-specific suppressions that
 # could hide real diagnostics in future capture code. miniaudio.h stays SYSTEM.
+# onnxruntime is linked PRIVATE: the Silero VAD adapter holds every ONNX type
+# behind a pimpl, so no onnxruntime header ever reaches the public audio
+# headers; the static library's private dependencies are still carried to the
+# final link. Qt6::Core is PRIVATE for the same reason — only the Silero VAD
+# adapter's .cpp reads the model through QFile/QResource (the qrc resource is
+# built into the library); the public audio headers stay Qt-free. The strict
+# profile is linked PRIVATE on purpose: every project-owned TU must see it, and
+# consumers compile against the public headers with their own flags.
 target_link_libraries(audio-assistant-audio
-    PRIVATE audio-assistant-strict miniaudio::miniaudio
+    PRIVATE audio-assistant-strict miniaudio::miniaudio onnxruntime::onnxruntime Qt6::Core
+)
+
+# ── Models resource library ─────────────────────────────────
+# Owns the embedded data assets (silero_vad.onnx + LICENSE/NOTICE) as a Qt
+# resource. It is an OBJECT library (not STATIC): object libraries linked into a
+# target have every object unconditionally included, so the rcc-generated
+# resource keeper always runs in the final binary. A STATIC library would rely
+# on archive-member selection and could silently drop the keeper, leaving the
+# model unreadable at runtime. Only consumers that actually need the model (the
+# application and the VAD smoke test) link it. The rcc-generated code needs the
+# qt-warnings suppressions, hence audio-assistant-qt-warnings here — the audio
+# library that owns the adapter stays strict.
+add_library(audio-assistant-models OBJECT)
+
+set_target_properties(audio-assistant-models PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(audio-assistant-models
+    PRIVATE audio-assistant-strict audio-assistant-qt-warnings Qt6::Core
+)
+
+qt_add_resources(audio-assistant-models "silero_vad_models"
+    PREFIX "/models/silero_vad"
+    BASE "models/silero_vad"
+    FILES models/silero_vad/silero_vad.onnx
 )
 
 # ── Domain library ──────────────────────────────────────────
@@ -447,6 +498,7 @@ target_link_libraries(audio-assistant PRIVATE
     audio-assistant-strict
     audio-assistant-qt-warnings
     audio-assistant-audio
+    audio-assistant-models
     audio-assistant-domain
     # For a static QML module the generated plugin must be linked into the
     # executable, otherwise the engine cannot register the module's C++ types.
@@ -755,6 +807,84 @@ set_tests_properties(tst_wavencoder PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
+# ── Speech segmenter test ───────────────────────────────────
+# Covers the pure VAD post-processing layer: threshold + hysteresis +
+# min-duration segmentation of a probability stream. STL-only, deterministic,
+# no detector, no ONNX, no Qt.
+qt_add_executable(tst_speechsegmenter
+    tests/tst_speechsegmenter.cpp
+)
+
+set_target_properties(tst_speechsegmenter PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_speechsegmenter PRIVATE
+    audio-assistant-strict
+    audio-assistant-audio
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_speechsegmenter COMMAND tst_speechsegmenter)
+set_tests_properties(tst_speechsegmenter PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── VAD gate test ───────────────────────────────────────────
+# Covers the framing/gating layer: cutting canonical PCM into VAD frames,
+# carrying partial frames across feedSamples() calls, and building keep-masks /
+# trimmed output. Uses the deterministic FakeVoiceActivityDetector, so no model
+# is loaded.
+qt_add_executable(tst_vadgate
+    tests/tst_vadgate.cpp
+    tests/FakeVoiceActivityDetector.cpp
+    tests/FakeVoiceActivityDetector.h
+)
+
+set_target_properties(tst_vadgate PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_vadgate PRIVATE
+    audio-assistant-strict
+    audio-assistant-audio
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_vadgate COMMAND tst_vadgate)
+set_tests_properties(tst_vadgate PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── VAD smoke test ──────────────────────────────────────────
+# Integration smoke test on the model: loads silero_vad.onnx from the embedded
+# Qt resource, feeds a deterministic synthetic tone burst, and asserts a speech
+# probability above the threshold. It needs the resource (audio-assistant-models)
+# and the real onnxruntime adapter (audio-assistant-audio). No device, no
+# network, no real-time audio.
+qt_add_executable(tst_vad_smoke
+    tests/tst_vad_smoke.cpp
+)
+
+set_target_properties(tst_vad_smoke PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_vad_smoke PRIVATE
+    audio-assistant-strict
+    audio-assistant-audio
+    audio-assistant-models
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_vad_smoke COMMAND tst_vad_smoke)
+set_tests_properties(tst_vad_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
 # ── Transcription adapter test ──────────────────────────────
 # Exercises the OpenAI-compatible transcriber against the local mock HTTP
 # server (tests/OpenAiMockServer): WAV+base64 request shape, successful text,
@@ -803,6 +933,8 @@ qt_add_executable(tst_audiocapture
     tests/FakeAudioSource.h
     tests/FakeTranscriber.cpp
     tests/FakeTranscriber.h
+    tests/FakeVoiceActivityDetector.cpp
+    tests/FakeVoiceActivityDetector.h
 )
 
 set_target_properties(tst_audiocapture PROPERTIES
