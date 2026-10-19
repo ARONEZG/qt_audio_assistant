@@ -1,0 +1,13 @@
+<!DOCTYPE RCC>
+<!--
+    Embedded data assets of the audio subsystem.
+
+    silero_vad.onnx — Silero VAD v6.2.1 voice-activity model (MIT, © 2020-present
+    Silero Team; see LICENSE/NOTICE in this directory). The model is a data asset
+    of the repository and is never downloaded at runtime.
+-->
+<RCC>
+    <qresource prefix="/models/silero_vad">
+        <file alias="silero_vad.onnx">silero_vad.onnx</file>
+    </qresource>
+</RCC>

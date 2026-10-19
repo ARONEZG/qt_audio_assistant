@@ -474,12 +474,17 @@ ensure_compile_commands() {
     mkdir -p "$build_dir"
 
     if ! command -v conan &>/dev/null; then
-        fail "conan not found in PATH (required for the spdlog/miniaudio/sqlite3/llmqore dependencies)"
+        fail "conan not found in PATH (required for the managed dependencies)"
         return 1
     fi
     info "Conan export recipes/llmqore"
     conan export "$PROJECT_ROOT/recipes/llmqore" 2>&1 | tail -2 || {
         fail "conan export (llmqore recipe) failed"
+        return 1
+    }
+    info "Conan export recipes/onnxruntime"
+    conan export "$PROJECT_ROOT/recipes/onnxruntime" 2>&1 | tail -2 || {
+        fail "conan export (onnxruntime recipe) failed"
         return 1
     }
     info "Conan install (Debug)"
@@ -637,7 +642,12 @@ step_scan_build() {
 
     info "Conan export recipes/llmqore"
     conan export "$PROJECT_ROOT/recipes/llmqore" 2>&1 | tail -2 || {
-        warn "scan-build: conan export failed — skipping"
+        warn "scan-build: conan export (llmqore) failed — skipping"
+        return 0
+    }
+    info "Conan export recipes/onnxruntime"
+    conan export "$PROJECT_ROOT/recipes/onnxruntime" 2>&1 | tail -2 || {
+        warn "scan-build: conan export (onnxruntime) failed — skipping"
         return 0
     }
 

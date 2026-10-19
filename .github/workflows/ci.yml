@@ -9,12 +9,13 @@ name: CI — Quality Gates
 # with aqtinstall into $HOME/Qt and points CMake at it explicitly; this mirrors
 # the local developer setup (see conanfile.py).
 #
-# spdlog, miniaudio, sqlite3 and LLMQore are provided by Conan (spdlog/1.14.1,
-# miniaudio/0.11.25 and sqlite3/3.54.0 from ConanCenter; llmqore/0.8.0 from the
-# in-repo recipe recipes/llmqore in conanfile.py) — the single source of truth
-# for their versions. Every job that builds installs Conan, exports the LLMQore
-# recipe, runs `conan install` and points CMake at the generated toolchain via
-# -DCONAN_BUILD_DIR; no system libspdlog-dev or libsqlite3-dev is used.
+# spdlog, miniaudio, sqlite3, LLMQore and onnxruntime are provided by Conan
+# (spdlog/1.14.1, miniaudio/0.11.25 and sqlite3/3.54.0 from ConanCenter;
+# llmqore/0.8.0 and onnxruntime/1.24.4 from the in-repo recipes in conanfile.py)
+# — the single source of truth for their versions. Every job that builds
+# installs Conan, exports the LLMQore and onnxruntime recipes, runs `conan
+# install` and points CMake at the generated toolchain via -DCONAN_BUILD_DIR; no
+# system libspdlog-dev or libsqlite3-dev is used.
 #
 # Runs on push to main, PR to main, and manually.
 # Free for public repos; 2000 min/month for private repos.
@@ -141,9 +142,10 @@ jobs:
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Conan install (spdlog, miniaudio, sqlite3, llmqore)
+      - name: Conan install (spdlog, miniaudio, sqlite3, llmqore, onnxruntime)
         run: |
           conan export recipes/llmqore
+          conan export recipes/onnxruntime
           conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
       - name: Setup ccache
@@ -213,9 +215,10 @@ jobs:
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Conan install (spdlog, miniaudio, sqlite3, llmqore)
+      - name: Conan install (spdlog, miniaudio, sqlite3, llmqore, onnxruntime)
         run: |
           conan export recipes/llmqore
+          conan export recipes/onnxruntime
           conan install . -of build/conan --build=missing \
             -pr:b profiles/clang18 -pr profiles/clang18 \
             -s:b build_type=Release -s build_type=Release
@@ -281,9 +284,10 @@ jobs:
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Conan install (spdlog, miniaudio, sqlite3, llmqore)
+      - name: Conan install (spdlog, miniaudio, sqlite3, llmqore, onnxruntime)
         run: |
           conan export recipes/llmqore
+          conan export recipes/onnxruntime
           conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
       # Configure and build Debug here: compile_commands.json and the AUTOMOC
@@ -386,9 +390,10 @@ jobs:
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Conan install (spdlog, miniaudio, sqlite3, llmqore)
+      - name: Conan install (spdlog, miniaudio, sqlite3, llmqore, onnxruntime)
         run: |
           conan export recipes/llmqore
+          conan export recipes/onnxruntime
           conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
       - name: Configure (ASan + UBSan)
@@ -454,9 +459,10 @@ jobs:
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Conan install (spdlog, miniaudio, sqlite3, llmqore)
+      - name: Conan install (spdlog, miniaudio, sqlite3, llmqore, onnxruntime)
         run: |
           conan export recipes/llmqore
+          conan export recipes/onnxruntime
           conan install . -of build/conan --build=missing -pr:b profiles/clang18 -pr profiles/clang18
 
       - name: Configure (coverage)
