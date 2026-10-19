@@ -62,6 +62,23 @@ void AudioCapture::transcribeLast() {
         const std::size_t kCapturedSamples = snapshot.size();
         snapshot = vadGate_->trimSilence(std::span<const float>(snapshot));
         qInfo() << "VAD kept" << snapshot.size() << "of" << kCapturedSamples << "samples";
+
+        // Guard: if the speech fragment after VAD trimming is shorter than the
+        // minimum meaningful duration, report a user-friendly error instead of
+        // sending a too-short fragment to the STT endpoint (which would likely
+        // hallucinate English text on short/noisy clips). The threshold lives here
+        // in AudioCapture because it is the orchestration seam that decides whether
+        // to call the transcriber at all — the VAD gate only trims silence, it does
+        // not make policy decisions about minimum transcriptable duration.
+        // 0.75 s at 16 kHz = 12000 samples.
+        constexpr std::size_t kMinSpeechSamples = 12000;
+        if (!snapshot.empty() && snapshot.size() < kMinSpeechSamples) {
+            qWarning() << "Speech fragment too short (" << snapshot.size() << " samples, < " << kMinSpeechSamples
+                       << "): skipping transcription";
+            onFailed(ProviderError::kInvalidResponse,
+                     QStringLiteral("Speech fragment too short — too brief to transcribe reliably"));
+            return;
+        }
     }
 
     transcriber_.transcribe(std::move(snapshot));

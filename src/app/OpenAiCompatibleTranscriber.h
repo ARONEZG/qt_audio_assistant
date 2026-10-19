@@ -53,6 +53,7 @@ public:
                                          QString apiKey,
                                          QString model = QStringLiteral("openai/whisper-1"),
                                          int transferTimeoutMs = 0,
+                                         QString language = QStringLiteral("ru"),
                                          QObject* parent = nullptr);
     ~OpenAiCompatibleTranscriber() override;
 
@@ -94,6 +95,7 @@ private:
     QString baseUrl_;
     QString apiKey_;
     QString model_;
+    QString language_;
     QNetworkAccessManager* network_;
     QNetworkReply* reply_ = nullptr;
 };

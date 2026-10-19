@@ -62,12 +62,15 @@ QString httpErrorMessage(int status, const QByteArray& body) {
 
 }  // namespace
 
+// 6 params: baseUrl, apiKey, model, transferTimeoutMs, language, parent.
+// NOLINTNEXTLINE(readability-function-size)
 OpenAiCompatibleTranscriber::OpenAiCompatibleTranscriber(
-        QString baseUrl, QString apiKey, QString model, int transferTimeoutMs, QObject* parent)
+        QString baseUrl, QString apiKey, QString model, int transferTimeoutMs, QString language, QObject* parent)
     : TranscriptionProvider(parent),
       baseUrl_(std::move(baseUrl)),
       apiKey_(std::move(apiKey)),
       model_(std::move(model)),
+      language_(std::move(language)),
       network_(new QNetworkAccessManager(this)) {
     if (transferTimeoutMs > 0) {
         network_->setTransferTimeout(transferTimeoutMs);
@@ -112,11 +115,15 @@ void OpenAiCompatibleTranscriber::transcribe(std::vector<float> samples) {
             QByteArray(kWavDataUrlPrefix) +
             QByteArray(reinterpret_cast<const char*>(kWav.data()), static_cast<qsizetype>(kWav.size())).toBase64();
 
-    const QJsonObject kPayload{
+    QJsonObject kPayload{
             {QStringLiteral("model"), model_},
             {QStringLiteral("file"), QString::fromLatin1(kFile)},
             {QStringLiteral("response_format"), QStringLiteral("json")},
+            {QStringLiteral("temperature"), 0.0},
     };
+    if (!language_.isEmpty()) {
+        kPayload.insert(QStringLiteral("language"), language_);
+    }
 
     QNetworkRequest request{QUrl(transcribeUrl())};
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));

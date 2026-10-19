@@ -414,6 +414,7 @@ add_library(audio-assistant-domain STATIC
     src/domain/ProviderSettings.cpp
     src/domain/Providers.cpp
     src/domain/SafeMarkdown.cpp
+    src/domain/SttLanguage.cpp
     src/domain/TranscriptionProvider.cpp
 )
 
@@ -587,6 +588,9 @@ audio_assistant_add_domain_test(tst_newchat
 )
 audio_assistant_add_domain_test(tst_provider_config
     tests/tst_provider_config.cpp
+)
+audio_assistant_add_domain_test(tst_stt_language
+    tests/tst_stt_language.cpp
 )
 audio_assistant_add_domain_test(tst_placeholderprovider
     tests/tst_placeholderprovider.cpp
