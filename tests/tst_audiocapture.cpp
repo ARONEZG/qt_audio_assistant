@@ -57,6 +57,8 @@ private slots:
     void test_cancelledFailureLeavesNoError();
     void test_vadGateTrimsSilenceBeforeTranscription();
     void test_vadGateWithNoSpeechStillTranscribesEmpty();
+    void test_vadGateShortFragmentFailsWithoutTranscriber();
+    void test_vadGateLongEnoughFragmentTranscribes();
     void test_noVadGateSendsWholeBuffer();
 };
 
@@ -229,19 +231,76 @@ void TestAudioCapture::test_vadGateTrimsSilenceBeforeTranscription() {
     audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 2, 2});
     capture.setVadGate(gate);
 
-    // 6 frames of sound in the buffer: silence, speech, speech, silence...
-    // The detector says frames 1..2 are speech, the rest silence.
-    detector.setSequence({0.05F, 0.9F, 0.9F, 0.05F, 0.05F, 0.05F});
-    buffer.write(std::vector<float>(6 * std::size_t{512}, 0.5F));
+    // 27 frames: silence, 25 speech frames (= 12800 samples, >= 12000 guard), silence.
+    // 25 speech frames pass both the minSpeechFrames segmenter check and the
+    // minimum-duration guard, so the trimming contract is exercised.
+    detector.setSequence({0.05F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F,
+                          0.9F,  0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.05F});
+    buffer.write(std::vector<float>(27 * std::size_t{512}, 0.5F));
 
     capture.transcribeLast();
 
     QTRY_COMPARE(transcriber.callCount(), 1);
-    // Only the two speech frames survive: exactly 1024 samples.
-    QCOMPARE(transcriber.lastSamples().size(), std::size_t{1024});
+    // Only the 25 speech frames survive: 25 * 512 = 12800 samples.
+    QCOMPARE(transcriber.lastSamples().size(), std::size_t{12800});
     for (const float kSample : transcriber.lastSamples()) {
         QCOMPARE(kSample, 0.5F);
     }
+}
+
+// When the VAD-trimmed speech fragment is shorter than the minimum meaningful
+// threshold (~0.75s = 12000 samples), the guard prevents calling the transcriber
+// and reports a user-friendly error instead.
+void TestAudioCapture::test_vadGateShortFragmentFailsWithoutTranscriber() {
+    audio::AudioBuffer buffer(kVadBufferDuration, canonicalFormat());
+    FakeAudioSource source;
+    FakeTranscriber transcriber;
+    AudioCapture capture(buffer, source, transcriber);
+    FakeVoiceActivityDetector detector;
+    audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 2, 2});
+    capture.setVadGate(gate);
+
+    // 6 frames: silence, speech, speech, silence...
+    // VAD keeps frames 1..2 = 1024 samples (well below the 12000 guard).
+    detector.setSequence({0.05F, 0.9F, 0.9F, 0.05F, 0.05F, 0.05F});
+    buffer.write(std::vector<float>(6 * std::size_t{512}, 0.5F));
+
+    const QSignalSpy kFailedSpy(&capture, &AudioCapture::failed);
+    capture.transcribeLast();
+
+    QTRY_COMPARE(kFailedSpy.count(), 1);
+    QCOMPARE(kFailedSpy.at(0).at(0).value<ProviderError>(), ProviderError::kInvalidResponse);
+    // The transcriber must NOT be called for a fragment below the threshold.
+    QCOMPARE(transcriber.callCount(), 0);
+    // Error text is exposed on the view model.
+    QVERIFY(capture.hasError());
+    QVERIFY(!capture.errorText().isEmpty());
+}
+
+// When the VAD-trimmed speech fragment meets the minimum threshold, the
+// transcriber is called normally (the guard must not block valid-length audio).
+void TestAudioCapture::test_vadGateLongEnoughFragmentTranscribes() {
+    audio::AudioBuffer buffer(kVadBufferDuration, canonicalFormat());
+    FakeAudioSource source;
+    FakeTranscriber transcriber;
+    AudioCapture capture(buffer, source, transcriber);
+    FakeVoiceActivityDetector detector;
+    audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 2, 2});
+    capture.setVadGate(gate);
+
+    // 27 frames: silence, 25 speech frames (= 12800 samples, >= 12000), silence.
+    detector.setSequence({0.05F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F,
+                          0.9F,  0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.05F});
+    buffer.write(std::vector<float>(27 * std::size_t{512}, 0.5F));
+
+    const QSignalSpy kTranscribedSpy(&capture, &AudioCapture::transcribed);
+    capture.transcribeLast();
+
+    QTRY_COMPARE(kTranscribedSpy.count(), 1);
+    QCOMPARE(transcriber.callCount(), 1);
+    // The 25 speech frames = 12800 samples are forwarded.
+    QCOMPARE(transcriber.lastSamples().size(), std::size_t{12800});
+    QVERIFY(!capture.hasError());
 }
 
 // When VAD finds no speech, the transcriber still receives a request (an empty

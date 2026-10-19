@@ -9,6 +9,28 @@
 
 ### Added
 
+- STT fixed language parameter: the transcription request now sends `"language": "ru"`
+  (configurable via `POLZA_STT_LANGUAGE`, default `"ru"`; empty string = autodetect) and
+  `"temperature": 0` to suppress English hallucinations on short/noisy clips while
+  preserving English technical terms in Russian speech (handled natively by the
+  multilingual Whisper tokenizer). The language is a fixed constructor parameter of
+  `OpenAiCompatibleTranscriber`, separate from the chat model and read from the
+  environment at startup via `sttLanguageFromEnvironment()` in `main.cpp`. An empty
+  (explicitly set) `POLZA_STT_LANGUAGE` omits the field from the request, reverting
+  to endpoint-side autodetection. Coverage: `tst_transcriber` (language + temperature
+  in payload, empty language omits the field).
+
+- Guard minimum speech duration: after VAD trimming, if the speech fragment is shorter
+  than ~0.75 s (12000 samples at 16 kHz), the request is not sent to the STT endpoint —
+  instead, a user-friendly error `kInvalidResponse` is emitted through the existing
+  `AudioCapture` error channel. This prevents Whisper from hallucinating English on
+  ultra-short fragments that are too short to transcribe reliably. The threshold
+  (`kMinSpeechSamples = 12000`) lives as a `constexpr` inside
+  `AudioCapture::transcribeLast()`, colocated with the VAD trimming branch — the
+  orchestration seam that decides whether to call the transcriber at all. Coverage:
+  `tst_audiocapture` (short fragment → failed without transcriber call, long enough
+  fragment → normal transcription, VAD trimming test updated for guard threshold).
+
 - Распознавание получает только речь: перед отправкой снимка на STT тишина
   обрезается детектором голосовой активности (Silero VAD v6.2.1, ONNX-модель
   встроена в приложение как Qt-ресурс и никогда не скачивается). Обрезка

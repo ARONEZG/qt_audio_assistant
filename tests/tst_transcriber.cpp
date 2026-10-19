@@ -71,6 +71,8 @@ private slots:
     void test_missingEndpointFailsWithoutNetwork();
     void test_setConfigurationPicksUpEndpointAndKey();
     void test_setConfigurationCanBeReapplied();
+    void test_sendsLanguageAndTemperature();
+    void test_emptyLanguageOmitsField();
 };
 
 TestTranscriber::TestTranscriber(QObject* parent) : QObject(parent) {
@@ -386,6 +388,44 @@ void TestTranscriber::test_setConfigurationPicksUpEndpointAndKey() {
     // setConfiguration must not clobber the (separate) speech-to-text model.
     const QJsonObject kPayload = QJsonDocument::fromJson(server.lastRequestBody()).object();
     QCOMPARE(kPayload.value(QStringLiteral("model")).toString(), QStringLiteral("openai/whisper-1"));
+}
+
+void TestTranscriber::test_sendsLanguageAndTemperature() {
+    OpenAiMockServer server;
+    QVERIFY(server.listen());
+    server.setHandler([](QTcpSocket& socket, const QByteArray&) {
+        writeJsonResponse(socket, 200, QByteArrayLiteral(R"({"text":"ok"})"));
+    });
+    OpenAiCompatibleTranscriber transcriber(
+            server.baseUrl(), QStringLiteral("k"), QStringLiteral("openai/whisper-1"), 0, QStringLiteral("ru"));
+
+    QSignalSpy kTranscribedSpy(&transcriber, &TranscriptionProvider::transcribed);
+    transcriber.transcribe({0.0F});
+    QVERIFY(kTranscribedSpy.wait(kReplyTimeout));
+
+    const QJsonObject kPayload = QJsonDocument::fromJson(server.lastRequestBody()).object();
+    QCOMPARE(kPayload.value(QStringLiteral("language")).toString(), QStringLiteral("ru"));
+    QCOMPARE(kPayload.value(QStringLiteral("temperature")).toDouble(), 0.0);
+}
+
+void TestTranscriber::test_emptyLanguageOmitsField() {
+    OpenAiMockServer server;
+    QVERIFY(server.listen());
+    server.setHandler([](QTcpSocket& socket, const QByteArray&) {
+        writeJsonResponse(socket, 200, QByteArrayLiteral(R"({"text":"ok"})"));
+    });
+    OpenAiCompatibleTranscriber transcriber(
+            server.baseUrl(), QStringLiteral("k"), QStringLiteral("openai/whisper-1"), 0, QStringLiteral(""));
+
+    QSignalSpy kTranscribedSpy(&transcriber, &TranscriptionProvider::transcribed);
+    transcriber.transcribe({0.0F});
+    QVERIFY(kTranscribedSpy.wait(kReplyTimeout));
+
+    const QJsonObject kPayload = QJsonDocument::fromJson(server.lastRequestBody()).object();
+    // Empty language must not send the field at all.
+    QVERIFY(!kPayload.contains(QStringLiteral("language")));
+    // temperature should still be present.
+    QCOMPARE(kPayload.value(QStringLiteral("temperature")).toDouble(), 0.0);
 }
 
 // The configuration update is not a one-shot: a second setConfiguration with a
