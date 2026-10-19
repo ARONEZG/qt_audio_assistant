@@ -6,10 +6,11 @@ ConanCenter lacks pre-built Qt binaries for Linux/Clang. On Linux, Qt is
 instead installed per-user with aqtinstall into ``~/Qt/6.8.3/gcc_64`` and
 located by CMake via ``-DCMAKE_PREFIX_PATH``.
 
-spdlog (logging), LLMQore (LLM client), miniaudio (audio capture) and SQLite
-(persistence) are the managed dependencies and Conan is the single source of
-truth for their versions (spdlog/1.14.1, llmqore/0.8.0, miniaudio/0.11.25,
-sqlite3/3.54.0). Local builds, ``scripts/ci-check.sh`` and CI all run
+spdlog (logging), LLMQore (LLM client), miniaudio (audio capture), SQLite
+(persistence) and onnxruntime (voice activity detection) are the managed
+dependencies and Conan is the single source of truth for their versions
+(spdlog/1.14.1, llmqore/0.8.0, miniaudio/0.11.25, sqlite3/3.54.0,
+onnxruntime/1.24.4). Local builds, ``scripts/ci-check.sh`` and CI all run
 ``conan install`` and configure CMake with ``-DCONAN_BUILD_DIR``; no system
 ``libspdlog-dev`` or ``libsqlite3-dev`` is used.
 
@@ -126,7 +127,12 @@ class AudioAssistantConan(ConanFile):
     # * sqlite3 — persistence (embedded SQL database), fetched from
     #   ConanCenter; exposes the SQLite::SQLite3 CMake target. The persistence
     #   layer is not implemented yet — see docs/ADR-persistence.md.
-    requires = "spdlog/1.14.1", "llmqore/0.8.0", "miniaudio/0.11.25", "sqlite3/3.54.0"
+    # * onnxruntime — voice activity detection (Silero VAD model), provided by
+    #   the in-repo recipe recipes/onnxruntime (exported before `conan install`,
+    #   like llmqore) because 1.24.4 does not compile with Clang 18 without the
+    #   upstream fix (docs/ADR-vad.md). Exposes the onnxruntime::onnxruntime
+    #   CMake target.
+    requires = "spdlog/1.14.1", "llmqore/0.8.0", "miniaudio/0.11.25", "sqlite3/3.54.0", "onnxruntime/1.24.4"
 
     def layout(self):
         cmake_layout(self)

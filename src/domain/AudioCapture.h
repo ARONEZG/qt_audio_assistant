@@ -11,6 +11,7 @@
 namespace audio {
 class AudioBuffer;
 class AudioSource;
+class VadSpeechGate;
 }  // namespace audio
 
 class TranscriptionProvider;
@@ -74,6 +75,13 @@ public:
                  QObject* parent = nullptr);
     ~AudioCapture() override;
 
+    // Attaches the voice-activity gate that trims silence before transcribing.
+    // The gate is optional: without it the whole buffer is sent (the historical
+    // behaviour). When present, transcribeLast() sends only the samples inside
+    // the detected speech intervals. The gate is borrowed and must outlive this
+    // object.
+    void setVadGate(audio::VadSpeechGate& gate);
+
     // Starts/stops capture; a thin command over the injected source. Idempotent
     // at the source (see the AudioSource contract).
     Q_INVOKABLE void start();
@@ -106,6 +114,7 @@ private:
     audio::AudioBuffer& buffer_;
     audio::AudioSource& source_;
     TranscriptionProvider& transcriber_;
+    audio::VadSpeechGate* vadGate_ = nullptr;
     QString errorText_;
     bool hasError_ = false;
 };

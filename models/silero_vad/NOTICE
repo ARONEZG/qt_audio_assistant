@@ -1,0 +1,11 @@
+Silero VAD v6.2.1 — silero_vad.onnx
+Copyright (c) 2020-present Silero Team
+
+This model is licensed under the MIT License (see LICENSE in this directory).
+
+Source: https://github.com/snakers4/silero-vad (tag v6.2.1)
+SHA-256: 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3
+File: src/silero_vad/data/silero_vad.onnx in the upstream repository.
+
+The model is embedded in the application as a Qt resource and is never
+downloaded at runtime.

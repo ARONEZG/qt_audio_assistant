@@ -141,19 +141,20 @@ find_clangpp() {
     echo ""
 }
 
-# ── Conan dependencies (spdlog, miniaudio, sqlite3, llmqore) ─
+# ── Conan dependencies (spdlog, miniaudio, sqlite3, llmqore, onnxruntime) ─
 
 CONAN_BUILD_DIR="$PROJECT_ROOT/build/conan"
 CONAN_LLMQORE_RECIPE="$PROJECT_ROOT/recipes/llmqore"
+CONAN_ONNXRUNTIME_RECIPE="$PROJECT_ROOT/recipes/onnxruntime"
 _CONAN_INSTALLED=""
 
-# spdlog, miniaudio, sqlite3 and LLMQore are managed Conan dependencies
-# (conanfile.py) and CMake pins find_package(spdlog 1.14 REQUIRED) /
-# find_package(SQLite3 REQUIRED) / find_package(LLMQore REQUIRED), so every
-# CMake configure must be preceded by `conan install` and receive
-# -DCONAN_BUILD_DIR. spdlog, miniaudio and sqlite3 come from ConanCenter;
-# llmqore is built from the in-repo recipe, which has to be exported into the
-# cache first.
+# spdlog, miniaudio, sqlite3, LLMQore and onnxruntime are managed Conan
+# dependencies (conanfile.py) and CMake pins find_package(spdlog 1.14 REQUIRED) /
+# find_package(SQLite3 REQUIRED) / find_package(LLMQore REQUIRED) /
+# find_package(onnxruntime REQUIRED), so every CMake configure must be preceded
+# by `conan install` and receive -DCONAN_BUILD_DIR. spdlog, miniaudio and
+# sqlite3 come from ConanCenter; llmqore and onnxruntime are built from the
+# in-repo recipes, which have to be exported into the cache first.
 #
 # The in-repo profile is passed for both the build and host contexts so no
 # machine-global default profile is required; the build type is matched so
@@ -170,12 +171,17 @@ conan_install() {
             ;;
     esac
     if ! command -v conan &>/dev/null; then
-        fail "conan not found in PATH (required for the spdlog/miniaudio/sqlite3/llmqore dependencies)"
+        fail "conan not found in PATH (required for the managed dependencies)"
         return 1
     fi
     info "Conan export recipes/llmqore"
     conan export "$CONAN_LLMQORE_RECIPE" 2>&1 | tail -2 || {
         fail "conan export (llmqore recipe) failed"
+        return 1
+    }
+    info "Conan export recipes/onnxruntime"
+    conan export "$CONAN_ONNXRUNTIME_RECIPE" 2>&1 | tail -2 || {
+        fail "conan export (onnxruntime recipe) failed"
         return 1
     }
     info "Conan install ($build_type)"

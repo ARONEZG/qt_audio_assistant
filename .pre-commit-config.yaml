@@ -28,6 +28,10 @@ repos:
       - id: check-yaml
       - id: check-added-large-files
         args: ['--maxkb=500']
+        # Исключение: adopted binary data-assets (silero_vad.onnx, ~2.3 МБ —
+        # см. docs/ADR-vad.md) хранятся в репозитории и встраиваются в бинарь
+        # Qt-ресурсом. Гард для всех остальных файлов остаётся.
+        exclude: ^models/.*\.onnx$
       - id: check-merge-conflict
       - id: mixed-line-ending
         args: ['--fix=lf']
