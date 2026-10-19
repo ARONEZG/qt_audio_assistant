@@ -56,7 +56,7 @@ public:
 
     // Preconditions (rejected with std::invalid_argument): threshold in (0, 1),
     // hysteresis in (0, threshold), minSpeechFrames > 0, minSilenceFrames >= 0.
-    explicit SpeechSegmenter(Parameters parameters);
+    explicit SpeechSegmenter(const Parameters& parameters);
 
     // Classifies the given probability stream and returns the merged speech
     // intervals. An empty input produces an empty result. The probabilities

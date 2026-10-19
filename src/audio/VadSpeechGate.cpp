@@ -17,7 +17,7 @@ inline constexpr std::size_t kVadFrameSize = 512;
 
 }  // namespace
 
-VadSpeechGate::VadSpeechGate(VoiceActivityDetector& detector, SpeechSegmenter::Parameters parameters)
+VadSpeechGate::VadSpeechGate(VoiceActivityDetector& detector, const SpeechSegmenter::Parameters& parameters)
     : detector_(detector), segmenter_(parameters) {
 }
 

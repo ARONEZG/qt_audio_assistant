@@ -115,7 +115,7 @@ std::vector<SpeechInterval> SpeechAccumulator::finish() {
 
 }  // namespace
 
-SpeechSegmenter::SpeechSegmenter(Parameters parameters) : parameters_(parameters) {
+SpeechSegmenter::SpeechSegmenter(const Parameters& parameters) : parameters_(parameters) {
     const bool kThresholdInRange = parameters_.threshold > 0.0F && parameters_.threshold < 1.0F;
     if (!kThresholdInRange) {
         throw std::invalid_argument("SpeechSegmenter: threshold must be in (0, 1)");

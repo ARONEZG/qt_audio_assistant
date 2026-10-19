@@ -46,7 +46,7 @@ public:
 
     // The detector is borrowed and must outlive the gate. The segmenter
     // parameters control threshold / hysteresis / min durations.
-    VadSpeechGate(VoiceActivityDetector& detector, SpeechSegmenter::Parameters parameters);
+    VadSpeechGate(VoiceActivityDetector& detector, const SpeechSegmenter::Parameters& parameters);
 
     // Appends one block of canonical PCM frames. Frames are cut into
     // 512-sample VAD frames; a partial tail frame at the block boundary is
