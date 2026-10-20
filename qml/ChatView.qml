@@ -14,6 +14,7 @@ Item {
 
     required property Chats chats
     required property AudioCapture audioCapture
+    required property VoiceInput voiceInput
 
     Accessible.name: qsTr("Chat")
 
@@ -21,11 +22,12 @@ Item {
         model: root.chats
         // The delegate's parent is the Repeater's parent (this Item), so it sizes
         // itself to the view without reaching for the outer id; the capture
-        // facade is passed down explicitly.
+        // facade and the voice command are passed down explicitly.
         delegate: ChatPanel {
             width: parent.width
             height: parent.height
             audioCapture: root.audioCapture
+            voiceInput: root.voiceInput
         }
     }
 

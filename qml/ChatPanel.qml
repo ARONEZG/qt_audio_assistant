@@ -6,15 +6,17 @@ import AudioAssistant
 // The panel of the single open chat: a header with the provider name, the
 // background-audio switch and the stream controls, then the transcript and the
 // composer, all bound to a single Chat.
-// Public API: `chat`, injected by the view from the model's role, and
-// `audioCapture`, the capture-pipeline facade passed down by the view. The panel
-// only binds their state and forwards the user's intentions (send, cancel,
-// toggle capture, transcribe) - it holds no state of its own.
+// Public API: `chat`, injected by the view from the model's role, `audioCapture`
+// (the capture-pipeline facade for state/errors) and `voiceInput`, the command
+// that recognizes the last utterance and posts it. The panel only binds their
+// state and forwards the user's intentions (send, cancel, toggle capture,
+// transcribe) - it holds no state of its own.
 Rectangle {
     id: root
 
     required property Chat chat
     required property AudioCapture audioCapture
+    required property VoiceInput voiceInput
 
     objectName: "chatPanel"
     implicitWidth: Theme.panelMinimumWidth
@@ -23,14 +25,15 @@ Rectangle {
     radius: Theme.radius
     border.color: Theme.border
 
-    // A transcription is text the user did not type: it is appended to the draft
-    // so it can be reviewed or edited before sending. The facade never emits
-    // synchronously (the TranscriptionProvider contract), so this runs later.
-    Connections {
-        target: root.audioCapture
-        function onTranscribed(text) {
-            composer.insertText(text);
-        }
+    // Ctrl+R is the keyboard form of the Transcribe button. Both go through the
+    // same C++ command, which recognizes the last utterance and posts it as a
+    // message. Disabled in the same states as the button: capture off, a reply
+    // in flight, or a transcription already running.
+    Shortcut {
+        objectName: "voiceInputShortcut"
+        sequence: "Ctrl+R"
+        enabled: root.chat.backgroundCaptureEnabled && !root.chat.streaming && !root.voiceInput.busy
+        onActivated: root.voiceInput.transcribeAndSend()
     }
 
     ColumnLayout {
@@ -77,21 +80,23 @@ Rectangle {
                 }
             }
 
-            // Sends the last N seconds of captured audio for recognition; the
-            // recognized text lands in the composer through onTranscribed above.
-            // Only meaningful while capture is on, so it follows the switch.
+            // Recognizes the last captured utterance and sends it as a message
+            // (the same command as Ctrl+R). Only meaningful while capture is on,
+            // so it follows the switch; a reply in flight or a running
+            // transcription disables it, matching the shortcut.
             Button {
                 objectName: "transcribeButton"
                 text: qsTr("Transcribe")
-                enabled: root.chat.backgroundCaptureEnabled
-                Accessible.name: qsTr("Transcribe the buffered audio")
-                onClicked: root.audioCapture.transcribeLast()
+                enabled: root.chat.backgroundCaptureEnabled && !root.chat.streaming && !root.voiceInput.busy
+                Accessible.name: qsTr("Transcribe and send the buffered audio")
+                Accessible.description: qsTr("Recognizes the last captured utterance and sends it to the chat. Shortcut: Ctrl+R")
+                onClicked: root.voiceInput.transcribeAndSend()
             }
 
             BusyIndicator {
-                running: root.chat.streaming
-                visible: root.chat.streaming
-                Accessible.name: qsTr("Waiting for a reply")
+                running: root.chat.streaming || root.voiceInput.busy
+                visible: running
+                Accessible.name: root.voiceInput.busy ? qsTr("Transcribing the captured audio") : qsTr("Waiting for a reply")
             }
 
             Button {

@@ -1,5 +1,6 @@
 #include <QFile>
 #include <QGuiApplication>
+#include <QKeyEvent>
 #include <QMetaObject>
 #include <QObject>
 #include <QQmlApplicationEngine>
@@ -33,6 +34,7 @@
 #include "domain/ProviderOffer.h"
 #include "domain/ProviderSettings.h"
 #include "domain/Providers.h"
+#include "domain/VoiceInput.h"
 
 namespace {
 
@@ -163,6 +165,9 @@ public:
                 }
             });
         }
+        // Mirror main(): the voice command sits between the capture facade and
+        // the open chat and backs both Ctrl+R and the Transcribe button.
+        voiceInput_ = std::make_unique<VoiceInput>(audioCapture_, chats_.at(0));
         engine_.setInitialProperties({
                 {QStringLiteral("chats"), QVariant::fromValue(&chats_)},
                 {QStringLiteral("providers"), QVariant::fromValue(&providers_)},
@@ -170,6 +175,7 @@ public:
                 {QStringLiteral("providerSettings"), QVariant::fromValue(&settings_)},
                 {QStringLiteral("audioCapture"), QVariant::fromValue(&audioCapture_)},
                 {QStringLiteral("captureSettings"), QVariant::fromValue(&captureSettings_)},
+                {QStringLiteral("voiceInput"), QVariant::fromValue(voiceInput_.get())},
         });
         engine_.load(QUrl(QStringLiteral("qrc:/qt/qml/AudioAssistant/Main.qml")));
         // A delegate is only instantiated once the window is shown and polished;
@@ -235,6 +241,9 @@ private:
     FakeAudioSource captureSource_;
     FakeTranscriber transcriber_;
     AudioCapture audioCapture_;
+    // Declared after the facade and the chats: destroyed before both, so the
+    // command never outlives its collaborators.
+    std::unique_ptr<VoiceInput> voiceInput_;
     QQmlApplicationEngine engine_;
 };
 
@@ -258,6 +267,17 @@ QObject* Harness::child(const QString& name) const {
     }
     QCoreApplication::processEvents();
     return dialog;
+}
+
+// Sends the window-level Ctrl+R shortcut the way the platform would. A raw key
+// event is used instead of QTest::keyClick: the latter's QPointer temporary
+// trips clang-analyzer's NewDelete check inside the Qt header, which cannot be
+// suppressed from project code.
+void pressVoiceInputShortcut(QQuickWindow& window) {
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_R, Qt::ControlModifier, QStringLiteral("r"));
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_R, Qt::ControlModifier, QStringLiteral("r"));
+    QCoreApplication::sendEvent(&window, &press);
+    QCoreApplication::sendEvent(&window, &release);
 }
 
 }  // namespace
@@ -285,7 +305,9 @@ private slots:
     void test_backgroundCaptureToggleStartsOff();
     void test_backgroundCaptureToggleStartsAndStopsCapture();
     void test_transcribeButtonIsDisabledWhileCaptureIsOff();
-    void test_transcribeButtonSendsTheBufferAndInsertsTheText();
+    void test_transcribeButtonSendsTheBufferAndPostsTheText();
+    void test_ctrlRTranscribesAndPostsTheText();
+    void test_voiceShortcutIsDisabledWhileChatIsStreaming();
     void test_failedTranscriptionShowsTheCaptureError();
     void test_backgroundCaptureToggleStaysInSyncAfterUserToggle();
     void test_providerSelectionSwitchesTheOpenChat();
@@ -574,15 +596,20 @@ void TestQmlChat::test_transcribeButtonIsDisabledWhileCaptureIsOff() {
     QObject* button = harness.child(QStringLiteral("transcribeButton"));
     QVERIFY(button != nullptr);
 
-    // Transcribing the buffer is only meaningful while capture is on.
+    // Transcribing the buffer is only meaningful while capture is on, for the
+    // button and its keyboard form alike.
     QCOMPARE(button->property("enabled").toBool(), false);
-
+    auto* window = qobject_cast<QQuickWindow*>(harness.root());
+    QVERIFY(window != nullptr);
+    pressVoiceInputShortcut(*window);
+    QCoreApplication::processEvents();
+    QCOMPARE(harness.transcriber().callCount(), 0);
     harness.chats().at(0)->setBackgroundCaptureEnabled(true);
     QCoreApplication::processEvents();
     QCOMPARE(button->property("enabled").toBool(), true);
 }
 
-void TestQmlChat::test_transcribeButtonSendsTheBufferAndInsertsTheText() {
+void TestQmlChat::test_transcribeButtonSendsTheBufferAndPostsTheText() {
     Harness harness;
     QCoreApplication::processEvents();
     harness.chats().at(0)->setBackgroundCaptureEnabled(true);
@@ -595,10 +622,57 @@ void TestQmlChat::test_transcribeButtonSendsTheBufferAndInsertsTheText() {
 
     // The button asks the facade to transcribe the buffer ...
     QTRY_COMPARE(harness.transcriber().callCount(), 1);
-    // ... and the recognized text lands in the draft for review.
+    // ... and the recognized text becomes a chat message (no draft copy).
+    Chat* chat = harness.chats().at(0);
+    QTRY_COMPARE(chat->messages().size(), std::size_t{1});
+    QCOMPARE(chat->messages().front().isUser(), true);
+    QCOMPARE(chat->messages().front().text(), QStringLiteral("hello from audio"));
+    QCOMPARE(harness.minted().at(0)->respondCount(), 1);
+
     QObject* input = harness.child(QStringLiteral("messageInput"));
     QVERIFY(input != nullptr);
-    QTRY_VERIFY(input->property("text").toString().contains(QStringLiteral("hello from audio")));
+    QCOMPARE(input->property("text").toString(), QString());
+}
+
+// Ctrl+R is wired to the same command as the button: recognize the last
+// utterance and post it to the open chat.
+void TestQmlChat::test_ctrlRTranscribesAndPostsTheText() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    harness.chats().at(0)->setBackgroundCaptureEnabled(true);
+    QCoreApplication::processEvents();
+    auto* window = qobject_cast<QQuickWindow*>(harness.root());
+    QVERIFY(window != nullptr);
+
+    harness.transcriber().succeedWith(QStringLiteral("spoken"));
+    pressVoiceInputShortcut(*window);
+
+    QTRY_COMPARE(harness.transcriber().callCount(), 1);
+    Chat* chat = harness.chats().at(0);
+    QTRY_COMPARE(chat->messages().size(), std::size_t{1});
+    QCOMPARE(chat->messages().front().text(), QStringLiteral("spoken"));
+    QCOMPARE(harness.minted().at(0)->respondCount(), 1);
+}
+
+void TestQmlChat::test_voiceShortcutIsDisabledWhileChatIsStreaming() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    Chat* chat = harness.chats().at(0);
+    chat->setBackgroundCaptureEnabled(true);
+    QCoreApplication::processEvents();
+    auto* window = qobject_cast<QQuickWindow*>(harness.root());
+    QVERIFY(window != nullptr);
+
+    chat->send(QStringLiteral("hi"));
+    QCoreApplication::processEvents();
+    harness.transcriber().succeedWith(QStringLiteral("spoken"));
+
+    pressVoiceInputShortcut(*window);
+    QCoreApplication::processEvents();
+
+    // A reply is streaming, so the shortcut did not even start recognition.
+    QCOMPARE(harness.transcriber().callCount(), 0);
+    QCOMPARE(chat->messages().size(), std::size_t{1});
 }
 
 void TestQmlChat::test_failedTranscriptionShowsTheCaptureError() {
