@@ -44,18 +44,20 @@ public:
 
 private slots:
     void test_missingFileIsAnEmptyConfiguration();
-    void test_roundTripPersistsBaseUrlAndModel();
-    void test_savedFileIsEnvCompatibleAndHasNoApiKey();
+    void test_roundTripPersistsBaseUrlModelAndApiKey();
+    void test_savedFileIsEnvCompatibleAndPersistsTheApiKey();
     void test_saveCreatesTheMissingParentDirectory();
     void test_loadSkipsCommentsAndUnknownKeys();
     void test_loadRejectsMalformedLine();
     void test_saveRejectsInvalidConfig_data();
     void test_saveRejectsInvalidConfig();
     void test_saveRejectsLineBreaks();
+    void test_saveRejectsLineBreakInApiKey();
     void test_emptyPathIsReportedHonestly();
 
     void test_environmentOverridesFilePerKey();
-    void test_apiKeyComesOnlyFromTheEnvironment();
+    void test_apiKeyFallsBackToTheFile();
+    void test_environmentApiKeyOverridesTheFile();
     void test_blankEnvironmentDoesNotOverrideTheFile();
     void test_sourceReportsFileErrors();
 };
@@ -73,35 +75,38 @@ void TestProviderConfig::test_missingFileIsAnEmptyConfiguration() {
     QVERIFY(kLoaded.ok());
     QVERIFY(kLoaded.config.baseUrl.isEmpty());
     QVERIFY(kLoaded.config.model.isEmpty());
+    QVERIFY(kLoaded.apiKey.isEmpty());
 }
 
-void TestProviderConfig::test_roundTripPersistsBaseUrlAndModel() {
+void TestProviderConfig::test_roundTripPersistsBaseUrlModelAndApiKey() {
     const QTemporaryDir kDirectory;
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
     const ProviderConfig kConfig{QStringLiteral("https://example.test/api/v1"), QStringLiteral("some-model")};
+    const QString kApiKey = QStringLiteral("secret-key");
 
-    QVERIFY(kFile.save(kConfig).ok());
+    QVERIFY(kFile.save(kConfig, kApiKey).ok());
     const ProviderConfigFile::LoadResult kLoaded = kFile.load();
 
     QVERIFY(kLoaded.ok());
     QCOMPARE(kLoaded.config.baseUrl, kConfig.baseUrl);
     QCOMPARE(kLoaded.config.model, kConfig.model);
+    QCOMPARE(kLoaded.apiKey, kApiKey);
 }
 
-void TestProviderConfig::test_savedFileIsEnvCompatibleAndHasNoApiKey() {
+void TestProviderConfig::test_savedFileIsEnvCompatibleAndPersistsTheApiKey() {
     const QTemporaryDir kDirectory;
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
 
-    QVERIFY(kFile.save({QStringLiteral("https://example.test/v1"), QStringLiteral("model-x")}).ok());
+    QVERIFY(kFile.save({QStringLiteral("https://example.test/v1"), QStringLiteral("model-x")},
+                       QStringLiteral("secret-key"))
+                    .ok());
     const QString kText = readText(kFile.path());
 
     QVERIFY(kText.contains(QStringLiteral("POLZA_BASE_URL=https://example.test/v1")));
     QVERIFY(kText.contains(QStringLiteral("POLZA_MODEL=model-x")));
-    // The file is user-readable and is never a secret store: the API key is not
-    // persisted at all, and the header must not even name the variable.
-    QVERIFY(!kText.contains(QStringLiteral("POLZA_API_KEY")));
+    QVERIFY(kText.contains(QStringLiteral("POLZA_API_KEY=secret-key")));
 }
 
 void TestProviderConfig::test_saveCreatesTheMissingParentDirectory() {
@@ -110,7 +115,7 @@ void TestProviderConfig::test_saveCreatesTheMissingParentDirectory() {
     const QString kPath = QDir(kDirectory.path()).filePath(QStringLiteral("nested/config/provider.env"));
     const ProviderConfigFile kFile(kPath);
 
-    QVERIFY(kFile.save({QStringLiteral("https://example.test/v1"), QStringLiteral("model-x")}).ok());
+    QVERIFY(kFile.save({QStringLiteral("https://example.test/v1"), QStringLiteral("model-x")}, QString()).ok());
 
     QVERIFY(QFile::exists(kPath));
 }
@@ -124,13 +129,15 @@ void TestProviderConfig::test_loadSkipsCommentsAndUnknownKeys() {
                                         "\n"
                                         "SOME_OTHER_KEY=ignored\n"
                                         "POLZA_MODEL=from-file\n"
-                                        "POLZA_BASE_URL=https://file.test/v1\n")));
+                                        "POLZA_BASE_URL=https://file.test/v1\n"
+                                        "POLZA_API_KEY=from-file-key\n")));
 
     const ProviderConfigFile::LoadResult kLoaded = kFile.load();
 
     QVERIFY(kLoaded.ok());
     QCOMPARE(kLoaded.config.baseUrl, QStringLiteral("https://file.test/v1"));
     QCOMPARE(kLoaded.config.model, QStringLiteral("from-file"));
+    QCOMPARE(kLoaded.apiKey, QStringLiteral("from-file-key"));
 }
 
 void TestProviderConfig::test_loadRejectsMalformedLine() {
@@ -165,7 +172,7 @@ void TestProviderConfig::test_saveRejectsInvalidConfig() {
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
 
-    const ProviderConfigFile::SaveResult kSaved = kFile.save({baseUrl, model});
+    const ProviderConfigFile::SaveResult kSaved = kFile.save({baseUrl, model}, QString());
 
     QVERIFY(!kSaved.ok());
     QVERIFY(!kSaved.error.isEmpty());
@@ -177,8 +184,20 @@ void TestProviderConfig::test_saveRejectsLineBreaks() {
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
 
-    QVERIFY(!kFile.save({QStringLiteral("https://example.test/v1"), QStringLiteral("bad\nmodel")}).ok());
-    QVERIFY(!kFile.save({QStringLiteral("https://example.test/v1\ninjected"), QStringLiteral("model")}).ok());
+    QVERIFY(!kFile.save({QStringLiteral("https://example.test/v1"), QStringLiteral("bad\nmodel")}, QString()).ok());
+    QVERIFY(!kFile.save({QStringLiteral("https://example.test/v1\ninjected"), QStringLiteral("model")}, QString())
+                     .ok());
+    QVERIFY(!QFile::exists(kFile.path()));
+}
+
+void TestProviderConfig::test_saveRejectsLineBreakInApiKey() {
+    const QTemporaryDir kDirectory;
+    QVERIFY(kDirectory.isValid());
+    const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
+
+    QVERIFY(!kFile.save({QStringLiteral("https://example.test/v1"), QStringLiteral("model")},
+                        QStringLiteral("bad\nkey"))
+                     .ok());
     QVERIFY(!QFile::exists(kFile.path()));
 }
 
@@ -186,14 +205,14 @@ void TestProviderConfig::test_emptyPathIsReportedHonestly() {
     const ProviderConfigFile kFile{QString()};
 
     QVERIFY(!kFile.load().ok());
-    QVERIFY(!kFile.save({QStringLiteral("https://example.test/v1"), QStringLiteral("model")}).ok());
+    QVERIFY(!kFile.save({QStringLiteral("https://example.test/v1"), QStringLiteral("model")}, QString()).ok());
 }
 
 void TestProviderConfig::test_environmentOverridesFilePerKey() {
     const QTemporaryDir kDirectory;
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
-    QVERIFY(kFile.save({QStringLiteral("https://file.test/v1"), QStringLiteral("file-model")}).ok());
+    QVERIFY(kFile.save({QStringLiteral("https://file.test/v1"), QStringLiteral("file-model")}, QString()).ok());
 
     QProcessEnvironment environment = emptyEnvironment();
     environment.insert(QStringLiteral("POLZA_BASE_URL"), QStringLiteral("https://env.test/v1"));
@@ -204,14 +223,27 @@ void TestProviderConfig::test_environmentOverridesFilePerKey() {
     QCOMPARE(kResolved.config.model, QStringLiteral("file-model"));
 }
 
-void TestProviderConfig::test_apiKeyComesOnlyFromTheEnvironment() {
+void TestProviderConfig::test_apiKeyFallsBackToTheFile() {
     const QTemporaryDir kDirectory;
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
-    QVERIFY(writeText(kFile.path(),
-                      QByteArrayLiteral("POLZA_BASE_URL=https://file.test/v1\n"
-                                        "POLZA_MODEL=file-model\n"
-                                        "POLZA_API_KEY=key-in-file-must-be-ignored\n")));
+    QVERIFY(kFile.save({QStringLiteral("https://file.test/v1"), QStringLiteral("file-model")},
+                       QStringLiteral("file-key"))
+                    .ok());
+
+    const ProviderConfigSource::Result kResolved = ProviderConfigSource(kFile, emptyEnvironment()).resolve();
+
+    QVERIFY(kResolved.ok());
+    QCOMPARE(kResolved.apiKey, QStringLiteral("file-key"));
+}
+
+void TestProviderConfig::test_environmentApiKeyOverridesTheFile() {
+    const QTemporaryDir kDirectory;
+    QVERIFY(kDirectory.isValid());
+    const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
+    QVERIFY(kFile.save({QStringLiteral("https://file.test/v1"), QStringLiteral("file-model")},
+                       QStringLiteral("file-key"))
+                    .ok());
 
     QProcessEnvironment environment = emptyEnvironment();
     environment.insert(QStringLiteral("POLZA_API_KEY"), QStringLiteral("session-key"));
@@ -226,7 +258,7 @@ void TestProviderConfig::test_blankEnvironmentDoesNotOverrideTheFile() {
     const QTemporaryDir kDirectory;
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
-    QVERIFY(kFile.save({QStringLiteral("https://file.test/v1"), QStringLiteral("file-model")}).ok());
+    QVERIFY(kFile.save({QStringLiteral("https://file.test/v1"), QStringLiteral("file-model")}, QString()).ok());
 
     QProcessEnvironment environment = emptyEnvironment();
     environment.insert(QStringLiteral("POLZA_BASE_URL"), QStringLiteral("   "));

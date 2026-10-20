@@ -69,10 +69,10 @@ public:
     // Updates the endpoint and key used by subsequent requests. Unlike the chat
     // provider (rebuilt from live settings on each mint), this adapter is built
     // once at startup; the composition root calls this when the user saves
-    // provider settings, so a key entered in the settings panel - a session
-    // secret that is never persisted - reaches transcription. The speech-to-text
-    // model/language/prompt are a separate concern and are updated through
-    // setSpeechOptions() when capture settings are saved.
+    // provider settings, so a key entered in the settings panel reaches
+    // transcription. The speech-to-text model/language/prompt are a separate
+    // concern and are updated through setSpeechOptions() when capture settings
+    // are saved.
     void setConfiguration(QString baseUrl, QString apiKey);
 
     // Updates the speech-to-text model and the optional language/prompt for

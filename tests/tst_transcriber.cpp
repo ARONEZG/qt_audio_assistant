@@ -364,9 +364,9 @@ void TestTranscriber::test_missingEndpointFailsWithoutNetwork() {
 }
 
 // Regression for the startup-order bug: the transcriber is built before the user
-// has entered a (session-only) API key, so its configuration must be updatable
-// in place. A saved endpoint+key must reach the next request, while the
-// speech-to-text model stays fixed.
+// has entered an API key, so its configuration must be updatable in place. A
+// saved endpoint+key must reach the next request, while the speech-to-text model
+// stays fixed.
 void TestTranscriber::test_setConfigurationPicksUpEndpointAndKey() {
     OpenAiMockServer server;
     QVERIFY(server.listen());

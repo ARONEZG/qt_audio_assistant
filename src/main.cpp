@@ -64,9 +64,8 @@ constexpr int kMaxCaptureSeconds = 120;
 }
 
 // Both persisted configurations, resolved once at startup. The real process
-// environment overrides the speech-to-text fields per value (see the sources);
-// the API key is read only from the environment. A read or key problem is
-// reported and never stops startup.
+// environment overrides the fields per value (see the sources), including the
+// API key. A read or key problem is reported and never stops startup.
 struct StartupConfig {
     ProviderConfigSource::Result provider;
     CaptureConfigSource::Result capture;
@@ -159,11 +158,11 @@ void wireCaptureSwitch(Chat& chat, AudioCapture& audioCapture, audio::MiniaudioC
 }
 
 // Keeps the transcriber's endpoint/key in sync with the live settings and logs
-// the startup configuration once. The API key is a session secret entered in the
-// settings panel (never persisted), so a transcriber frozen at startup would
-// otherwise keep an empty or stale key and reject every request. The
-// speech-to-text model/language/prompt are a separate concern and are kept in
-// sync by wireCaptureSettings().
+// the startup configuration once. The API key can be changed and saved in the
+// settings panel, so a transcriber frozen at startup would otherwise keep an
+// empty or stale key and reject every request. The speech-to-text
+// model/language/prompt are a separate concern and are kept in sync by
+// wireCaptureSettings().
 void wireTranscriberSettings(ProviderSettings& settings,
                              OpenAiCompatibleTranscriber& transcriber,
                              const QString& sttModel) {

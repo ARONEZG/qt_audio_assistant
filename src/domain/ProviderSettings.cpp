@@ -36,29 +36,31 @@ bool ProviderSettings::save(const QString& baseUrl, const QString& model, const 
         return false;
     }
 
-    const ProviderConfigFile::SaveResult kSaved = file_.save(kNormalized);
+    // A blank key field means "keep the current key" (from the environment or a
+    // previous save); a typed key replaces it. The effective key is what gets
+    // persisted, so an empty field never erases an already-saved key.
+    const QString kTypedKey = apiKey.trimmed();
+    const QString kEffectiveKey = kTypedKey.isEmpty() ? apiKey_ : kTypedKey;
+
+    const ProviderConfigFile::SaveResult kSaved = file_.save(kNormalized, kEffectiveKey);
     if (!kSaved.ok()) {
         setLastError(kSaved.error);
         return false;
     }
 
-    applySavedConfig(kNormalized, apiKey);
+    applySavedConfig(kNormalized, kEffectiveKey);
     return true;
 }
 
 void ProviderSettings::applySavedConfig(const ProviderConfig& config, const QString& apiKey) {
     // Replace the stored value as a whole (copy-and-modify rather than
-    // field-by-field mutation). The session key is replaced only when the view
-    // supplied one; an empty field means the existing key (for example from the
-    // environment) stays.
-    const QString kNormalizedKey = apiKey.trimmed();
+    // field-by-field mutation). The effective key was already resolved by save()
+    // (a blank field kept the current key), so it is applied unconditionally.
     const bool kWasKeyConfigured = isKeyConfigured();
     const bool kBaseUrlChanged = config_.baseUrl != config.baseUrl;
     const bool kModelChanged = config_.model != config.model;
     config_ = config;
-    if (!kNormalizedKey.isEmpty()) {
-        apiKey_ = kNormalizedKey;
-    }
+    apiKey_ = apiKey;
     setLastError(QString());
 
     if (kBaseUrlChanged) {

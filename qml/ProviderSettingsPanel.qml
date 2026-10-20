@@ -3,8 +3,9 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import AudioAssistant
 
-// Provider configuration form: base URL and model are persisted by the save
-// command, the API key is a masked, write-only session value.
+// Provider configuration form: base URL, model and API key are persisted by the
+// save command. The key is a masked, write-only field: it is never read back
+// from ProviderSettings into the view.
 // Public API: `settings`, injected by the composition root. The form keeps the
 // fields as a local draft (ProviderSettings exposes read-only properties and a
 // single save command), so editing never mutates the stored configuration.
@@ -68,14 +69,16 @@ GroupBox {
 
                 objectName: "providerApiKeyField"
                 Layout.fillWidth: true
-                // The key is a session secret: masked, never read back from
-                // ProviderSettings and never persisted. An empty field keeps the
-                // key that may already come from the environment.
+                // The key is masked and write-only: never read back from
+                // ProviderSettings into the view. It is persisted by the save
+                // command together with the endpoint and model. An empty field
+                // keeps the key that may already be saved or come from the
+                // environment.
                 echoMode: TextInput.Password
-                placeholderText: root.settings.isKeyConfigured ? qsTr("configured — type to replace") : qsTr("session only")
+                placeholderText: root.settings.isKeyConfigured ? qsTr("configured — type to replace") : qsTr("saved with settings")
                 onTextEdited: root.settings.clearError()
-                Accessible.name: qsTr("API key for this session")
-                Accessible.description: qsTr("Stored in memory for this session only; never saved to disk")
+                Accessible.name: qsTr("API key")
+                Accessible.description: qsTr("Saved with the provider settings; masked and never read back")
             }
         }
 
