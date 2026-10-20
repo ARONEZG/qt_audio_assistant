@@ -20,6 +20,10 @@ QtObject {
     readonly property int fontSizeBody: 14
     readonly property int fontSizeTitle: 18
 
+    // Message content.
+    // Caps a pasted image preview so a portrait photo cannot fill the transcript.
+    readonly property int messageImageMaxHeight: 320
+
     // Palette.
     readonly property color background: "#1e1e1e"
     readonly property color surface: "#2a2a2a"

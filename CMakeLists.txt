@@ -408,8 +408,12 @@ add_library(audio-assistant-domain STATIC
     src/domain/CaptureSettings.cpp
     src/domain/Chat.cpp
     src/domain/Chats.cpp
+    src/domain/ClipboardImageSource.cpp
+    src/domain/ImageAttachment.cpp
+    src/domain/ImageEncoder.cpp
     src/domain/Message.cpp
     src/domain/NewChat.cpp
+    src/domain/PasteImage.cpp
     src/domain/Provider.cpp
     src/domain/ProviderConfig.cpp
     src/domain/ProviderConfigFile.cpp
@@ -443,15 +447,17 @@ target_include_directories(audio-assistant-domain PRIVATE
 # Qt6::Qml is public because the domain types carry the QML registration macros
 # (QML_ELEMENT) in their headers; every consumer of the headers needs the Qml
 # include path. The types are the view models, so there is no separate adapter.
-# Qt6::Gui is private: SafeMarkdown sanitises untrusted assistant text through
-# QTextDocument, an implementation detail no header exposes. The audio library is
-# private too: AudioCapture is the capture-pipeline facade and its header only
-# forward-declares the audio types, so the dependency is an implementation detail
-# (it is still carried to the final link, as CMake does for a static library's
-# private dependencies).
+# Qt6::Gui is public because ClipboardImageSource exposes a decoded QImage in its
+# role interface (the platform clipboard read happens on the GUI thread, while
+# encoding runs on a worker). Qt6::Concurrent is private: only PasteImage's .cpp
+# uses QtConcurrent::run, and the public contract is asynchronous by signal.
+# The audio library is private too: AudioCapture is the capture-pipeline facade
+# and its header only forward-declares the audio types, so the dependency is an
+# implementation detail (it is still carried to the final link, as CMake does for
+# a static library's private dependencies).
 target_link_libraries(audio-assistant-domain
-    PUBLIC Qt6::Core Qt6::Qml
-    PRIVATE audio-assistant-strict audio-assistant-qt-warnings audio-assistant-audio Qt6::Gui
+    PUBLIC Qt6::Core Qt6::Qml Qt6::Gui
+    PRIVATE audio-assistant-strict audio-assistant-qt-warnings audio-assistant-audio Qt6::Concurrent
 )
 
 # ── QML module ──────────────────────────────────────────────
@@ -497,9 +503,11 @@ qt_add_qml_module(audio-assistant-domain
 
 # ── Main executable ─────────────────────────────────────────
 add_executable(audio-assistant
+    src/app/ClipboardImageEncoder.cpp
     src/app/OpenAiCompatibleProvider.cpp
     src/app/OpenAiCompatibleTranscriber.cpp
     src/app/PlaceholderProvider.cpp
+    src/app/SystemClipboard.cpp
     src/main.cpp
     src/logging/LogBridge.cpp
 )
@@ -560,6 +568,18 @@ endfunction()
 audio_assistant_add_domain_test(tst_message
     tests/tst_message.cpp
 )
+audio_assistant_add_domain_test(tst_imageattachment
+    tests/tst_imageattachment.cpp
+)
+audio_assistant_add_domain_test(tst_pasteimage
+    tests/tst_pasteimage.cpp
+    tests/FakeProvider.cpp
+    tests/FakeProvider.h
+    tests/FakeClipboardImageSource.cpp
+    tests/FakeClipboardImageSource.h
+    tests/FakeImageEncoder.cpp
+    tests/FakeImageEncoder.h
+)
 audio_assistant_add_domain_test(tst_answer
     tests/tst_answer.cpp
 )
@@ -579,6 +599,34 @@ audio_assistant_add_domain_test(tst_safe_markdown
 # SafeMarkdown is Qt Gui based (QTextDocument), so its test needs a
 # QGuiApplication (QTEST_MAIN) just like tst_chat.
 target_link_libraries(tst_safe_markdown PRIVATE Qt6::Gui)
+# ── Clipboard image encoder test ────────────────────────────
+# Covers the paste path's encoding policy without a clipboard or a GUI session:
+# PNG by default, long-side cap, JPEG fallback above the size budget, and
+# transparent-to-white flattening. Qt Gui provides QImage; QTEST_GUILESS_MAIN
+# needs no display.
+qt_add_executable(tst_clipboard_image_encoder
+    tests/tst_clipboard_image_encoder.cpp
+    src/app/ClipboardImageEncoder.cpp
+)
+
+set_target_properties(tst_clipboard_image_encoder PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_clipboard_image_encoder PRIVATE
+    audio-assistant-strict
+    audio-assistant-qt-warnings
+    audio-assistant-domain
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+)
+
+add_test(NAME tst_clipboard_image_encoder COMMAND tst_clipboard_image_encoder)
+set_tests_properties(tst_clipboard_image_encoder PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
 audio_assistant_add_domain_test(tst_providers
     tests/tst_providers.cpp
     tests/FakeProvider.cpp
@@ -1057,6 +1105,10 @@ audio_assistant_add_qml_test(tst_main
     tests/FakeAudioSource.h
     tests/FakeTranscriber.cpp
     tests/FakeTranscriber.h
+    tests/FakeClipboardImageSource.cpp
+    tests/FakeClipboardImageSource.h
+    # The real encoding policy: the QML test must produce a decodable preview.
+    src/app/ClipboardImageEncoder.cpp
 )
 
 # tst_main also drives the capture controls, so it needs the audio library's

@@ -1,6 +1,9 @@
+#include <QByteArray>
 #include <QString>
 #include <QtTest>
+#include <optional>
 
+#include "domain/ImageAttachment.h"
 #include "domain/Message.h"
 
 namespace {
@@ -28,6 +31,11 @@ private slots:
     void test_differentTextComparesUnequal();
     void test_emptyTextIsValid();
     void test_copyEqualsOriginal();
+    void test_textMessageHasNoImage();
+    void test_constructsWithAnImage();
+    void test_imageOnlyMessageHasEmptyText();
+    void test_differentImageComparesUnequal();
+    void test_copyKeepsTheImage();
 };
 
 TestMessage::TestMessage(QObject* parent) : QObject(parent) {
@@ -86,6 +94,67 @@ void TestMessage::test_copyEqualsOriginal() {
 
     QCOMPARE(kCopy, kOriginal);
     QCOMPARE(kCopy.text(), kOriginal.text());
+}
+
+void TestMessage::test_textMessageHasNoImage() {
+    const Message kMessage(MessageRole::kUser, QStringLiteral("hello"));
+
+    QCOMPARE(kMessage.hasImage(), false);
+    QCOMPARE(kMessage.image().has_value(), false);
+}
+
+void TestMessage::test_constructsWithAnImage() {
+    const ImageAttachment kImage(QByteArray("png-bytes"), QStringLiteral("image/png"));
+    const Message kMessage(MessageRole::kUser, QStringLiteral("look"), kImage);
+
+    QCOMPARE(kMessage.role(), MessageRole::kUser);
+    QCOMPARE(kMessage.text(), QStringLiteral("look"));
+    QCOMPARE(kMessage.hasImage(), true);
+    const std::optional<ImageAttachment>& kAttachment = kMessage.image();
+    if (!kAttachment.has_value()) {
+        QFAIL("the message must carry the attachment");
+    }
+    QCOMPARE(*kAttachment, kImage);
+}
+
+void TestMessage::test_imageOnlyMessageHasEmptyText() {
+    const Message kMessage(
+            MessageRole::kUser, QString(), ImageAttachment(QByteArray("bytes"), QStringLiteral("image/jpeg")));
+
+    // An image is content on its own: the caption is optional.
+    QCOMPARE(kMessage.text(), QString());
+    QCOMPARE(kMessage.hasImage(), true);
+    const std::optional<ImageAttachment>& kAttachment = kMessage.image();
+    if (!kAttachment.has_value()) {
+        QFAIL("the message must carry the attachment");
+    }
+    QCOMPARE(kAttachment->mimeType(), QStringLiteral("image/jpeg"));
+}
+
+void TestMessage::test_differentImageComparesUnequal() {
+    const Message kFirst(MessageRole::kUser,
+                         QStringLiteral("look"),
+                         ImageAttachment(QByteArray("one"), QStringLiteral("image/png")));
+    const Message kSecond(MessageRole::kUser,
+                          QStringLiteral("look"),
+                          ImageAttachment(QByteArray("two"), QStringLiteral("image/png")));
+
+    QVERIFY(!(kFirst == kSecond));
+}
+
+void TestMessage::test_copyKeepsTheImage() {
+    const Message kOriginal(MessageRole::kUser,
+                            QStringLiteral("look"),
+                            ImageAttachment(QByteArray("bytes"), QStringLiteral("image/png")));
+    const Message kCopy = copyOf(kOriginal);
+
+    QCOMPARE(kCopy, kOriginal);
+    QCOMPARE(kCopy.hasImage(), true);
+    const std::optional<ImageAttachment>& kAttachment = kCopy.image();
+    if (!kAttachment.has_value()) {
+        QFAIL("the copy must keep the attachment");
+    }
+    QCOMPARE(kAttachment->data(), QByteArray("bytes"));
 }
 
 QTEST_GUILESS_MAIN(TestMessage)

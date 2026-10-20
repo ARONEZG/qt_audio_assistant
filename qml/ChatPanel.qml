@@ -17,6 +17,7 @@ Rectangle {
     required property Chat chat
     required property AudioCapture audioCapture
     required property VoiceInput voiceInput
+    required property PasteImage pasteImage
 
     objectName: "chatPanel"
     implicitWidth: Theme.panelMinimumWidth
@@ -147,6 +148,8 @@ Rectangle {
 
             Layout.fillWidth: true
             busy: root.chat.streaming
+            chat: root.chat
+            imagePaster: root.pasteImage
             onSubmitted: text => root.chat.send(text)
         }
     }

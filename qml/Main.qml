@@ -21,6 +21,7 @@ ApplicationWindow {
     required property AudioCapture audioCapture
     required property CaptureSettings captureSettings
     required property VoiceInput voiceInput
+    required property PasteImage pasteImage
 
     title: qsTr("Audio Assistant")
     visible: true
@@ -66,6 +67,7 @@ ApplicationWindow {
             chats: window.chats
             audioCapture: window.audioCapture
             voiceInput: window.voiceInput
+            pasteImage: window.pasteImage
         }
     }
 
