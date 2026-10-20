@@ -1,3 +1,4 @@
+#include <QClipboard>
 #include <QFile>
 #include <QGuiApplication>
 #include <QKeyEvent>
@@ -89,15 +90,23 @@ QObject* findInItems(QQuickItem* root, const QString& name) {
     return found;
 }
 
-// The label Text of the one delegate whose `isUser` matches, or nullptr while no
-// such delegate has been materialised yet.
-[[nodiscard]] QObject* messageLabel(QQuickWindow* window, bool isUser) {
+// The delegate whose `isUser` matches, or nullptr while no such delegate has
+// been materialised yet.
+[[nodiscard]] QObject* messageDelegate(QQuickWindow* window, bool isUser) {
     for (QQuickItem* delegate : collectItems(window->contentItem(), QStringLiteral("messageDelegate"))) {
         if (delegate->property("isUser").toBool() == isUser) {
-            return findInItems(delegate, QStringLiteral("messageText"));
+            return delegate;
         }
     }
     return nullptr;
+}
+
+// The label of the one delegate whose `isUser` matches, or nullptr while no such
+// delegate has been materialised yet.
+[[nodiscard]] QObject* messageLabel(QQuickWindow* window, bool isUser) {
+    QObject* delegate = messageDelegate(window, isUser);
+    return delegate == nullptr ? nullptr
+                               : findInItems(qobject_cast<QQuickItem*>(delegate), QStringLiteral("messageText"));
 }
 
 // The rectangle of `item` that is actually painted, in `root` coordinates: the
@@ -114,6 +123,19 @@ QObject* findInItems(QQuickItem* root, const QString& name) {
                 painted.intersected(ancestor->mapRectToItem(root, QRectF(0, 0, ancestor->width(), ancestor->height())));
     }
     return painted;
+}
+
+// The plain text of a rendered TextEdit document, unlike its `text` property:
+// with Markdown the property normalises back to Markdown source, while getText
+// returns what the reader actually sees.
+[[nodiscard]] QString renderedText(QObject* textEdit) {
+    QString rendered;
+    const int kLength = textEdit->property("length").toInt();
+    if (!QMetaObject::invokeMethod(
+                textEdit, "getText", Q_RETURN_ARG(QString, rendered), Q_ARG(int, 0), Q_ARG(int, kLength))) {
+        return {};
+    }
+    return rendered;
 }
 
 // Mirrors SafeMarkdown's invariant: no '<' may reach the renderer unescaped.
@@ -298,6 +320,8 @@ private slots:
     void test_sendButtonForwardsTypedTextToTheChat();
     void test_streamingTailShowsTheLiveReply();
     void test_messageDelegateRendersAssistantMarkdownAndUserPlainText();
+    void test_messageTextIsSelectableAndCopyable();
+    void test_messageContextMenuCopiesTheSelection();
     void test_streamingTailRendersSanitisedMarkdown();
     void test_streamingTailFollowsEachAnswer();
     void test_streamingTailStaysInsideTheChatPanel();
@@ -422,9 +446,102 @@ void TestQmlChat::test_messageDelegateRendersAssistantMarkdownAndUserPlainText()
 
     // The assistant's reply is Markdown, sanitised in C++ first.
     QCOMPARE(assistantLabel->property("textFormat").toInt(), static_cast<int>(Qt::MarkdownText));
-    const QString kAssistantText = assistantLabel->property("text").toString();
-    QVERIFY(kAssistantText.contains(QStringLiteral("**bold**")));
-    QVERIFY(!hasUnescapedAngleBracket(kAssistantText));
+    // A Markdown TextEdit re-serialises its `text` property, so the sanitisation
+    // invariant is checked on the delegate's markup - the exact value bound to
+    // the renderer - not on the normalised property.
+    QObject* assistantDelegate = messageDelegate(window, false);
+    QVERIFY(assistantDelegate != nullptr);
+    const QString kAssistantMarkup = assistantDelegate->property("markup").toString();
+    QVERIFY(kAssistantMarkup.contains(QStringLiteral("**bold**")));
+    QVERIFY(!hasUnescapedAngleBracket(kAssistantMarkup));
+    // The escaped tag reaches the reader as literal text rather than being
+    // interpreted as HTML (which would drop or execute it).
+    const QString kRendered = renderedText(assistantLabel);
+    QVERIFY(kRendered.contains(QStringLiteral("bold")));
+    QVERIFY(kRendered.contains(QStringLiteral("<script>x</script>")));
+}
+
+// A message used to be a static Text label: nothing could be selected or copied.
+// It is now a read-only text editor, so a reply can be selected and copied out of
+// the chat while the bubble keeps rendering the same content.
+void TestQmlChat::test_messageTextIsSelectableAndCopyable() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    Chat* chat = harness.chats().at(0);
+    chat->send(QStringLiteral("selectable question"));
+    harness.minted().at(0)->lastAnswer()->complete(
+            Message(MessageRole::kAssistant, QStringLiteral("selectable answer")));
+    QCoreApplication::processEvents();
+
+    auto* window = qobject_cast<QQuickWindow*>(harness.root());
+    QVERIFY(window != nullptr);
+    QVERIFY(QTest::qWaitFor(
+            [window] { return collectItems(window->contentItem(), QStringLiteral("messageDelegate")).size() == 2; }));
+
+    QObject* assistantLabel = messageLabel(window, false);
+    QVERIFY(assistantLabel != nullptr);
+    // Read-only, yet selectable by mouse and keyboard, and the selection survives
+    // focus moving to the context menu.
+    QCOMPARE(assistantLabel->property("readOnly").toBool(), true);
+    QCOMPARE(assistantLabel->property("selectByMouse").toBool(), true);
+    QCOMPARE(assistantLabel->property("selectByKeyboard").toBool(), true);
+    QCOMPARE(assistantLabel->property("persistentSelection").toBool(), true);
+
+    QVERIFY(QMetaObject::invokeMethod(assistantLabel, "selectAll"));
+    // The selection is the rendered text, not the raw Markdown source.
+    QCOMPARE(assistantLabel->property("selectedText").toString(), QStringLiteral("selectable answer"));
+
+    // A selected passage is copied with the standard keyboard shortcut, as in
+    // any other text control.
+    auto* assistantItem = qobject_cast<QQuickItem*>(assistantLabel);
+    QVERIFY(assistantItem != nullptr);
+    assistantItem->forceActiveFocus();
+    QCoreApplication::processEvents();
+    QVERIFY(assistantItem->hasActiveFocus());
+
+    QGuiApplication::clipboard()->clear();
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier, QStringLiteral("c"));
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_C, Qt::ControlModifier, QStringLiteral("c"));
+    QCoreApplication::sendEvent(window, &press);
+    QCoreApplication::sendEvent(window, &release);
+    QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("selectable answer"));
+}
+
+// The right-click menu is the discoverable form of the copy action: Copy follows
+// whether anything is selected, and Select All makes a whole message copyable.
+void TestQmlChat::test_messageContextMenuCopiesTheSelection() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    Chat* chat = harness.chats().at(0);
+    chat->send(QStringLiteral("copy this"));
+    harness.minted().at(0)->lastAnswer()->complete(Message(MessageRole::kAssistant, QStringLiteral("done")));
+    QCoreApplication::processEvents();
+
+    auto* window = qobject_cast<QQuickWindow*>(harness.root());
+    QVERIFY(window != nullptr);
+    QVERIFY(QTest::qWaitFor(
+            [window] { return collectItems(window->contentItem(), QStringLiteral("messageDelegate")).size() == 2; }));
+
+    QObject* userLabel = messageLabel(window, true);
+    QVERIFY(userLabel != nullptr);
+    auto* menu = userLabel->findChild<QObject*>(QStringLiteral("textContextMenu"));
+    QVERIFY(menu != nullptr);
+    auto* copyItem = menu->findChild<QObject*>(QStringLiteral("copyMenuItem"));
+    auto* selectAllItem = menu->findChild<QObject*>(QStringLiteral("selectAllMenuItem"));
+    QVERIFY(copyItem != nullptr);
+    QVERIFY(selectAllItem != nullptr);
+
+    // Copying is an action on a selection, so it starts disabled and becomes
+    // available once the message is selected.
+    QCOMPARE(copyItem->property("enabled").toBool(), false);
+    QVERIFY(QMetaObject::invokeMethod(selectAllItem, "triggered"));
+    QCoreApplication::processEvents();
+    QCOMPARE(userLabel->property("selectedText").toString(), QStringLiteral("copy this"));
+    QCOMPARE(copyItem->property("enabled").toBool(), true);
+
+    QGuiApplication::clipboard()->clear();
+    QVERIFY(QMetaObject::invokeMethod(copyItem, "triggered"));
+    QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("copy this"));
 }
 
 void TestQmlChat::test_streamingTailRendersSanitisedMarkdown() {
@@ -441,8 +558,12 @@ void TestQmlChat::test_streamingTailRendersSanitisedMarkdown() {
     // The sanitised live markup is republished at the domain's throttle cadence,
     // so poll for the rebound value instead of assuming one event-loop pass.
     QVERIFY(QTest::qWaitFor([tail] { return tail->property("text").toString().contains(QStringLiteral("**live**")); }));
-    const QString kText = tail->property("text").toString();
-    QVERIFY(!hasUnescapedAngleBracket(kText));
+    // The binding source stays sanitised, and the escaped tag is displayed as
+    // literal text rather than parsed as HTML.
+    QVERIFY(!hasUnescapedAngleBracket(chat->streamingMarkup()));
+    const QString kRendered = renderedText(tail);
+    QVERIFY(kRendered.contains(QStringLiteral("live")));
+    QVERIFY(kRendered.contains(QStringLiteral("<script>bad</script>")));
 }
 
 // The tail mirrors the in-flight answer as it grows and is reused by the next
