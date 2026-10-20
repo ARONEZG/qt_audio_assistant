@@ -15,6 +15,12 @@ namespace {
 // detector consumes; sample indices map to frame indices through it.
 inline constexpr std::size_t kVadFrameSize = 512;
 
+// Context kept around the selected utterance so the STT model hears word
+// onsets and endings instead of a hard cut at a 32 ms frame boundary. These are
+// starting values: they are the tuning knobs for real-microphone behaviour.
+inline constexpr std::size_t kPreRollSamples = 4800;   // 300 ms at 16 kHz
+inline constexpr std::size_t kPostRollSamples = 3200;  // 200 ms at 16 kHz
+
 }  // namespace
 
 VadSpeechGate::VadSpeechGate(VoiceActivityDetector& detector, const SpeechSegmenter::Parameters& parameters)
@@ -82,6 +88,27 @@ std::vector<float> VadSpeechGate::trimSilence(std::span<const float> samples) {
         }
     }
     return trimmed;
+}
+
+std::vector<float> VadSpeechGate::lastSpeechBlock(std::span<const float> samples) {
+    reset();
+    feedSamples(samples);
+    if (intervals_.empty()) {
+        return {};
+    }
+
+    // Only the final interval is the current utterance; earlier intervals are
+    // older phrases in the capture window and would make the STT request (and
+    // its latency) grow with the whole 30 s window.
+    const SpeechInterval& kLast = intervals_.back();
+    const std::size_t kSpeechStart = kLast.start() * kVadFrameSize;
+    const std::size_t kSpeechEnd = kLast.end() * kVadFrameSize;
+    const std::size_t kStart = kSpeechStart > kPreRollSamples ? kSpeechStart - kPreRollSamples : 0;
+    const std::size_t kEnd = std::min(samples.size(), kSpeechEnd + kPostRollSamples);
+    if (kStart >= kEnd) {
+        return {};
+    }
+    return {samples.begin() + static_cast<std::ptrdiff_t>(kStart), samples.begin() + static_cast<std::ptrdiff_t>(kEnd)};
 }
 
 void VadSpeechGate::reset() {

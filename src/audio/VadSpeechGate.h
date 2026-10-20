@@ -32,11 +32,13 @@ namespace audio {
 // This class is pure C++/STL (no Qt, no ONNX); the VoiceActivityDetector is an
 // injected role, so tests use a deterministic double.
 //
-// Public API note: production only calls trimSilence(). feedSamples(),
+// Public API note: production calls lastSpeechBlock(). feedSamples(),
 // intervals(), keepMask() and consumedSamples() form a deliberate seam for
 // streaming segmentation (feed blocks as they arrive, query the mask) and for
 // the deterministic tests; they are intentionally kept public rather than
 // hidden, so the streaming path can be built without reshaping the class.
+// trimSilence() is kept for compatibility (and for callers that really want all
+// speech intervals concatenated); the capture pipeline uses lastSpeechBlock().
 class VadSpeechGate {
 public:
     // Non-copyable and non-movable: the gate borrows the detector and owns
@@ -73,14 +75,19 @@ public:
     // speech intervals, and returns only the samples inside those intervals
     // (concatenated in chronological order). An empty result means the block
     // contained no speech (or every detected run was shorter than minSpeech).
-    // This is the main integration point with AudioCapture::transcribeLast().
-    //
-    // Limitation: the intervals are concatenated with all silence between them
-    // removed, so two phrases separated by a pause longer than minSilenceFrames
-    // arrive back-to-back ([phrase1][phrase2]) with no separator. That is the
-    // intended "trim silence" behaviour, not "select the last question"; the
-    // latter (keep only the final interval) is a deliberate next step.
+    // Kept for compatibility: two phrases separated by a pause longer than
+    // minSilenceFrames arrive back-to-back ([phrase1][phrase2]) with no
+    // separator, which makes the request as long as the whole capture window.
+    // The capture pipeline uses lastSpeechBlock() instead.
     [[nodiscard]] std::vector<float> trimSilence(std::span<const float> samples);
+
+    // Convenience one-shot for the capture pipeline: runs the same VAD pass as
+    // trimSilence() but returns only the LAST speech interval, extended by a
+    // 300 ms pre-roll and a 200 ms post-roll taken from the original block.
+    // The padding preserves word onsets/endings that a frame-aligned cut would
+    // clip; it is clipped to the block boundaries. An empty result means no
+    // speech was detected, so the caller must not send a request.
+    [[nodiscard]] std::vector<float> lastSpeechBlock(std::span<const float> samples);
 
     // The number of PCM samples consumed by feedSamples() so far, including the
     // partial frame currently held. Used to align the mask with the stream.

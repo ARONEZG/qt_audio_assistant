@@ -13,7 +13,9 @@
 #include <QSignalSpy>
 #include <QString>
 #include <QtTest>
+#include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <vector>
 
 #include "FakeAudioSource.h"
@@ -27,6 +29,21 @@
 #include "domain/ProviderError.h"
 
 namespace {
+
+// The VAD frame size in samples (32 ms at 16 kHz).
+constexpr std::size_t kFrameSize = 512;
+
+// Every sample of frame N carries the value N, so the returned block can be
+// checked against the exact source range it was copied from.
+std::vector<float> frameValues(std::size_t frameCount) {
+    std::vector<float> samples(frameCount * kFrameSize);
+    for (std::size_t frame = 0; frame < frameCount; ++frame) {
+        std::fill_n(samples.begin() + static_cast<std::ptrdiff_t>(frame * kFrameSize),
+                    kFrameSize,
+                    static_cast<float>(frame));
+    }
+    return samples;
+}
 
 // The ring buffer capacity used by the delegation tests: 100 ms at the
 // canonical 16 kHz stream (1600 samples).
@@ -55,8 +72,8 @@ private slots:
     void test_failedTranscriptionExposesErrorText();
     void test_newTranscribeClearsTheError();
     void test_cancelledFailureLeavesNoError();
-    void test_vadGateTrimsSilenceBeforeTranscription();
-    void test_vadGateWithNoSpeechStillTranscribesEmpty();
+    void test_vadGateSendsOnlyTheLastSpeechBlock();
+    void test_vadGateWithNoSpeechFailsWithoutTranscriber();
     void test_vadGateShortFragmentFailsWithoutTranscriber();
     void test_vadGateLongEnoughFragmentTranscribes();
     void test_noVadGateSendsWholeBuffer();
@@ -220,9 +237,10 @@ void TestAudioCapture::test_cancelledFailureLeavesNoError() {
     QCOMPARE(capture.errorText(), QString());
 }
 
-// With a VAD gate attached, only the samples inside the detected speech
-// intervals reach the transcriber (the surrounding silence is trimmed).
-void TestAudioCapture::test_vadGateTrimsSilenceBeforeTranscription() {
+// With a VAD gate attached, only the last detected utterance reaches the
+// transcriber, extended by a 300 ms pre-roll and a 200 ms post-roll so word
+// onsets and endings are not clipped.
+void TestAudioCapture::test_vadGateSendsOnlyTheLastSpeechBlock() {
     audio::AudioBuffer buffer(kVadBufferDuration, canonicalFormat());
     FakeAudioSource source;
     FakeTranscriber transcriber;
@@ -231,21 +249,29 @@ void TestAudioCapture::test_vadGateTrimsSilenceBeforeTranscription() {
     audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 2, 2});
     capture.setVadGate(gate);
 
-    // 27 frames: silence, 25 speech frames (= 12800 samples, >= 12000 guard), silence.
-    // 25 speech frames pass both the minSpeechFrames segmenter check and the
-    // minimum-duration guard, so the trimming contract is exercised.
-    detector.setSequence({0.05F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F,
-                          0.9F,  0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.05F});
-    buffer.write(std::vector<float>(27 * std::size_t{512}, 0.5F));
+    // 27 frames (13824 samples). Two utterances: frames 0..1 and 12..23, with a
+    // long pause between them. Only the second one (plus padding) may be sent.
+    constexpr std::size_t kFrameCount = 27;
+    std::vector<float> probabilities(kFrameCount, 0.05F);
+    probabilities[0] = 0.9F;
+    probabilities[1] = 0.9F;
+    for (std::size_t frame = 12; frame < 24; ++frame) {
+        probabilities[frame] = 0.9F;
+    }
+    detector.setSequence(std::move(probabilities));
+    buffer.write(frameValues(kFrameCount));
 
     capture.transcribeLast();
 
     QTRY_COMPARE(transcriber.callCount(), 1);
-    // Only the 25 speech frames survive: 25 * 512 = 12800 samples.
-    QCOMPARE(transcriber.lastSamples().size(), std::size_t{12800});
-    for (const float kSample : transcriber.lastSamples()) {
-        QCOMPARE(kSample, 0.5F);
-    }
+    // Last interval [12*512, 24*512) = [6144, 12288). Pre-roll 4800 samples
+    // reaches 1344 (past the first utterance), post-roll 3200 is clipped at the
+    // block end 13824.
+    constexpr std::size_t kExpectedStart = 12 * kFrameSize - 4800;
+    constexpr std::size_t kExpectedSize = kFrameCount * kFrameSize - kExpectedStart;
+    QCOMPARE(transcriber.lastSamples().size(), kExpectedSize);
+    QCOMPARE(transcriber.lastSamples().front(), 2.0F);
+    QCOMPARE(transcriber.lastSamples().back(), 26.0F);
 }
 
 // When the VAD-trimmed speech fragment is shorter than the minimum meaningful
@@ -288,7 +314,10 @@ void TestAudioCapture::test_vadGateLongEnoughFragmentTranscribes() {
     audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 2, 2});
     capture.setVadGate(gate);
 
-    // 27 frames: silence, 25 speech frames (= 12800 samples, >= 12000), silence.
+    // 27 frames: silence, 25 speech frames, silence. The last interval is
+    // [1*512, 26*512); the 300 ms pre-roll reaches sample 0 and the 200 ms
+    // post-roll is clipped at the block end, so the whole 27-frame block (13824
+    // samples, >= 12000) is forwarded.
     detector.setSequence({0.05F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F,
                           0.9F,  0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.05F});
     buffer.write(std::vector<float>(27 * std::size_t{512}, 0.5F));
@@ -298,14 +327,15 @@ void TestAudioCapture::test_vadGateLongEnoughFragmentTranscribes() {
 
     QTRY_COMPARE(kTranscribedSpy.count(), 1);
     QCOMPARE(transcriber.callCount(), 1);
-    // The 25 speech frames = 12800 samples are forwarded.
-    QCOMPARE(transcriber.lastSamples().size(), std::size_t{12800});
+    // The last speech block with its padding covers all 27 frames.
+    QCOMPARE(transcriber.lastSamples().size(), 27 * std::size_t{512});
     QVERIFY(!capture.hasError());
 }
 
-// When VAD finds no speech, the transcriber still receives a request (an empty
-// block, matching the empty-buffer behaviour) rather than being skipped.
-void TestAudioCapture::test_vadGateWithNoSpeechStillTranscribesEmpty() {
+// When VAD finds no speech at all, there is nothing to recognise. The request
+// is reported locally as a failure instead of sending an empty block to the
+// network, so the user gets an honest reason and no pointless round-trip.
+void TestAudioCapture::test_vadGateWithNoSpeechFailsWithoutTranscriber() {
     audio::AudioBuffer buffer(kVadBufferDuration, canonicalFormat());
     FakeAudioSource source;
     FakeTranscriber transcriber;
@@ -317,10 +347,14 @@ void TestAudioCapture::test_vadGateWithNoSpeechStillTranscribesEmpty() {
     detector.setConstant(0.05F);
     buffer.write(std::vector<float>(4 * std::size_t{512}, 0.1F));
 
+    const QSignalSpy kFailedSpy(&capture, &AudioCapture::failed);
     capture.transcribeLast();
 
-    QTRY_COMPARE(transcriber.callCount(), 1);
-    QVERIFY(transcriber.lastSamples().empty());
+    QTRY_COMPARE(kFailedSpy.count(), 1);
+    QCOMPARE(kFailedSpy.at(0).at(0).value<ProviderError>(), ProviderError::kInvalidResponse);
+    QCOMPARE(transcriber.callCount(), 0);
+    QVERIFY(capture.hasError());
+    QVERIFY(!capture.errorText().isEmpty());
 }
 
 // Without a gate the historical behaviour holds: the whole buffer is handed to

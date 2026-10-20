@@ -73,6 +73,8 @@ private slots:
     void test_setConfigurationCanBeReapplied();
     void test_sendsLanguageAndTemperature();
     void test_emptyLanguageOmitsField();
+    void test_sendsPromptWhenConfigured();
+    void test_emptyPromptOmitsField();
 };
 
 TestTranscriber::TestTranscriber(QObject* parent) : QObject(parent) {
@@ -425,6 +427,54 @@ void TestTranscriber::test_emptyLanguageOmitsField() {
     // Empty language must not send the field at all.
     QVERIFY(!kPayload.contains(QStringLiteral("language")));
     // temperature should still be present.
+    QCOMPARE(kPayload.value(QStringLiteral("temperature")).toDouble(), 0.0);
+}
+
+// A prompt biases vocabulary and spelling ("умные указатели" instead of
+// "умные казахи"), so a configured prompt must reach the wire verbatim.
+void TestTranscriber::test_sendsPromptWhenConfigured() {
+    OpenAiMockServer server;
+    QVERIFY(server.listen());
+    server.setHandler([](QTcpSocket& socket, const QByteArray&) {
+        writeJsonResponse(socket, 200, QByteArrayLiteral(R"({"text":"ok"})"));
+    });
+    OpenAiCompatibleTranscriber transcriber(server.baseUrl(),
+                                            QStringLiteral("k"),
+                                            QStringLiteral("openai/whisper-1"),
+                                            0,
+                                            QStringLiteral("ru"),
+                                            QStringLiteral("умные указатели, C++, Qt"));
+
+    QSignalSpy kTranscribedSpy(&transcriber, &TranscriptionProvider::transcribed);
+    transcriber.transcribe({0.0F});
+    QVERIFY(kTranscribedSpy.wait(kReplyTimeout));
+
+    const QJsonObject kPayload = QJsonDocument::fromJson(server.lastRequestBody()).object();
+    QCOMPARE(kPayload.value(QStringLiteral("prompt")).toString(), QStringLiteral("умные указатели, C++, Qt"));
+    QCOMPARE(kPayload.value(QStringLiteral("temperature")).toDouble(), 0.0);
+}
+
+// An empty prompt is not sent: the field is optional and an empty string would
+// only add noise to the request.
+void TestTranscriber::test_emptyPromptOmitsField() {
+    OpenAiMockServer server;
+    QVERIFY(server.listen());
+    server.setHandler([](QTcpSocket& socket, const QByteArray&) {
+        writeJsonResponse(socket, 200, QByteArrayLiteral(R"({"text":"ok"})"));
+    });
+    OpenAiCompatibleTranscriber transcriber(server.baseUrl(),
+                                            QStringLiteral("k"),
+                                            QStringLiteral("openai/whisper-1"),
+                                            0,
+                                            QStringLiteral("ru"),
+                                            QString());
+
+    QSignalSpy kTranscribedSpy(&transcriber, &TranscriptionProvider::transcribed);
+    transcriber.transcribe({0.0F});
+    QVERIFY(kTranscribedSpy.wait(kReplyTimeout));
+
+    const QJsonObject kPayload = QJsonDocument::fromJson(server.lastRequestBody()).object();
+    QVERIFY(!kPayload.contains(QStringLiteral("prompt")));
     QCOMPARE(kPayload.value(QStringLiteral("temperature")).toDouble(), 0.0);
 }
 
