@@ -37,7 +37,7 @@ class TranscriptionProvider;
 // Its whole contract is delegation plus relay:
 //
 //   start()/stop()       -> source.start()/stop()
-//   transcribeLast()     -> transcriber.transcribe(buffer.snapshot())
+//   transcribeLast()     -> transcriber.transcribe(last captureWindowSeconds of buffer.snapshot())
 //   format()             -> source.format()
 //   transcribed/failed   -> the transcriber's own terminal signals, re-emitted
 //
@@ -77,12 +77,18 @@ public:
     ~AudioCapture() override;
 
     // Attaches the voice-activity gate that selects the last utterance before
-    // transcribing. The gate is optional: without it the whole buffer is sent
-    // (the historical behaviour). When present, transcribeLast() sends only the
-    // last detected speech interval, extended by a short pre-roll/post-roll so
-    // word boundaries are not clipped, instead of the whole capture window. The
-    // gate is borrowed and must outlive this object.
+    // transcribing. The gate is optional: without it the whole capture window is
+    // sent. When present and enabled through setCaptureOptions(), transcribeLast()
+    // sends only the last detected speech interval, extended by a short
+    // pre-roll/post-roll so word boundaries are not clipped, instead of the whole
+    // capture window. The gate is borrowed and must outlive this object.
     void setVadGate(audio::VadSpeechGate& gate);
+
+    // Replaces the capture window and the local VAD gating options used by the
+    // next transcribeLast(). Called by the composition root at startup and after
+    // the user saves capture settings; deliberately not exposed to QML, because
+    // CaptureSettings owns the user-facing command and validation.
+    void setCaptureOptions(int captureWindowSeconds, bool vadEnabled, double minSpeechSeconds);
 
     // Starts/stops capture; a thin command over the injected source. Idempotent
     // at the source (see the AudioSource contract).
@@ -128,6 +134,11 @@ private:
     audio::AudioSource& source_;
     TranscriptionProvider& transcriber_;
     audio::VadSpeechGate* vadGate_ = nullptr;
+    // How much of the tail of the ring buffer a request covers.
+    int captureWindowSeconds_ = 20;
+    bool vadEnabled_ = true;
+    // Minimum detected speech (not padding) required to transcribe.
+    double minSpeechSeconds_ = 0.75;
     QString errorText_;
     bool hasError_ = false;
 };

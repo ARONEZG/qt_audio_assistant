@@ -71,6 +71,8 @@ private slots:
     void test_missingEndpointFailsWithoutNetwork();
     void test_setConfigurationPicksUpEndpointAndKey();
     void test_setConfigurationCanBeReapplied();
+    void test_setSpeechOptionsUpdatesThePayload();
+    void test_setSpeechOptionsEmptyLanguageAndPromptOmitsFields();
     void test_sendsLanguageAndTemperature();
     void test_emptyLanguageOmitsField();
     void test_sendsPromptWhenConfigured();
@@ -500,6 +502,50 @@ void TestTranscriber::test_setConfigurationCanBeReapplied() {
     QVERIFY(kTranscribedSpy.wait(kReplyTimeout));
     QCOMPARE(server.requestCount(), 2);
     QCOMPARE(server.lastRequestHeader("Authorization"), QByteArrayLiteral("Bearer second-key"));
+}
+
+// Saving capture settings must reach the next request: the model, language and
+// prompt are updated in place, separately from the endpoint/key.
+void TestTranscriber::test_setSpeechOptionsUpdatesThePayload() {
+    OpenAiMockServer server;
+    QVERIFY(server.listen());
+    server.setHandler([](QTcpSocket& socket, const QByteArray&) {
+        writeJsonResponse(socket, 200, QByteArrayLiteral(R"({"text":"ok"})"));
+    });
+    OpenAiCompatibleTranscriber transcriber(server.baseUrl(), QStringLiteral("k"));
+    transcriber.setSpeechOptions(
+            QStringLiteral("openai/whisper-large-v3"), QStringLiteral("en"), QStringLiteral("C++, Qt"));
+
+    QSignalSpy kTranscribedSpy(&transcriber, &TranscriptionProvider::transcribed);
+    transcriber.transcribe({0.0F});
+    QVERIFY(kTranscribedSpy.wait(kReplyTimeout));
+
+    const QJsonObject kPayload = QJsonDocument::fromJson(server.lastRequestBody()).object();
+    QCOMPARE(kPayload.value(QStringLiteral("model")).toString(), QStringLiteral("openai/whisper-large-v3"));
+    QCOMPARE(kPayload.value(QStringLiteral("language")).toString(), QStringLiteral("en"));
+    QCOMPARE(kPayload.value(QStringLiteral("prompt")).toString(), QStringLiteral("C++, Qt"));
+}
+
+// An empty language/prompt set through setSpeechOptions means the fields are
+// omitted, exactly like the constructor defaults.
+void TestTranscriber::test_setSpeechOptionsEmptyLanguageAndPromptOmitsFields() {
+    OpenAiMockServer server;
+    QVERIFY(server.listen());
+    server.setHandler([](QTcpSocket& socket, const QByteArray&) {
+        writeJsonResponse(socket, 200, QByteArrayLiteral(R"({"text":"ok"})"));
+    });
+    OpenAiCompatibleTranscriber transcriber(server.baseUrl(), QStringLiteral("k"));
+    transcriber.setSpeechOptions(QStringLiteral("openai/whisper-medium"), QString(), QString());
+
+    QSignalSpy kTranscribedSpy(&transcriber, &TranscriptionProvider::transcribed);
+    transcriber.transcribe({0.0F});
+    QVERIFY(kTranscribedSpy.wait(kReplyTimeout));
+
+    const QJsonObject kPayload = QJsonDocument::fromJson(server.lastRequestBody()).object();
+    QCOMPARE(kPayload.value(QStringLiteral("model")).toString(), QStringLiteral("openai/whisper-medium"));
+    QVERIFY(!kPayload.contains(QStringLiteral("language")));
+    QVERIFY(!kPayload.contains(QStringLiteral("prompt")));
+    QCOMPARE(kPayload.value(QStringLiteral("temperature")).toDouble(), 0.0);
 }
 
 QTEST_GUILESS_MAIN(TestTranscriber)

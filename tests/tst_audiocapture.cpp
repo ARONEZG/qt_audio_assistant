@@ -77,6 +77,10 @@ private slots:
     void test_vadGateShortFragmentFailsWithoutTranscriber();
     void test_vadGateLongEnoughFragmentTranscribes();
     void test_noVadGateSendsWholeBuffer();
+    void test_captureWindowKeepsOnlyTheNewestSamples();
+    void test_vadDisabledSendsTheWholeSnapshot();
+    void test_minSpeechSecondsLowerBoundAllowsShorterSpeech();
+    void test_minSpeechSecondsUpperBoundRejectsLongerSpeech();
 };
 
 TestAudioCapture::TestAudioCapture(QObject* parent) : QObject(parent) {
@@ -375,6 +379,116 @@ void TestAudioCapture::test_noVadGateSendsWholeBuffer() {
 
     QTRY_COMPARE(transcriber.callCount(), 1);
     QVERIFY(transcriber.lastSamples() == kFrames);
+}
+
+// The ring buffer may hold more audio than the configured capture window (it is
+// sized for the largest selectable window), so a request must send only the
+// newest captureWindowSeconds worth of samples.
+void TestAudioCapture::test_captureWindowKeepsOnlyTheNewestSamples() {
+    audio::AudioBuffer buffer(std::chrono::seconds(5), canonicalFormat());
+    FakeAudioSource source;
+    FakeTranscriber transcriber;
+    AudioCapture capture(buffer, source, transcriber);
+    capture.setCaptureOptions(1, true, 0.75);
+
+    // Two seconds of canonical audio; each sample carries its own index so the
+    // kept tail is unambiguous.
+    constexpr std::size_t kSampleCount = 2 * std::size_t{16000};
+    std::vector<float> samples(kSampleCount);
+    for (std::size_t index = 0; index < samples.size(); ++index) {
+        samples[index] = static_cast<float>(index);
+    }
+    buffer.write(samples);
+
+    capture.transcribeLast();
+
+    QTRY_COMPARE(transcriber.callCount(), 1);
+    const std::vector<float>& kSent = transcriber.lastSamples();
+    QCOMPARE(kSent.size(), std::size_t{16000});
+    QCOMPARE(kSent.front(), 16000.0F);
+    QCOMPARE(kSent.back(), 31999.0F);
+}
+
+// With VAD disabled the gate is bypassed: the whole (window-trimmed) snapshot
+// is sent even though the detector would report no speech.
+void TestAudioCapture::test_vadDisabledSendsTheWholeSnapshot() {
+    audio::AudioBuffer buffer(kVadBufferDuration, canonicalFormat());
+    FakeAudioSource source;
+    FakeTranscriber transcriber;
+    AudioCapture capture(buffer, source, transcriber);
+    FakeVoiceActivityDetector detector;
+    audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 2, 2});
+    capture.setVadGate(gate);
+    capture.setCaptureOptions(20, false, 0.75);
+
+    detector.setConstant(0.05F);
+    const std::vector<float> kFrames(3 * std::size_t{512}, 0.5F);
+    buffer.write(kFrames);
+
+    capture.transcribeLast();
+
+    QTRY_COMPARE(transcriber.callCount(), 1);
+    QVERIFY(transcriber.lastSamples() == kFrames);
+    QVERIFY(!capture.hasError());
+}
+
+// A lower minimum speech duration lets a fragment through that the default
+// 0.75 s guard would reject.
+void TestAudioCapture::test_minSpeechSecondsLowerBoundAllowsShorterSpeech() {
+    audio::AudioBuffer buffer(kVadBufferDuration, canonicalFormat());
+    FakeAudioSource source;
+    FakeTranscriber transcriber;
+    AudioCapture capture(buffer, source, transcriber);
+    FakeVoiceActivityDetector detector;
+    audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 2, 2});
+    capture.setVadGate(gate);
+    capture.setCaptureOptions(20, true, 0.25);
+
+    // Silence, 10 speech frames (5120 speech samples), silence. 5120 is above
+    // 0.25 s (4000 samples) but below the default 0.75 s (12000 samples).
+    constexpr std::size_t kFrameCount = 12;
+    std::vector<float> probabilities(kFrameCount, 0.05F);
+    for (std::size_t frame = 1; frame <= 10; ++frame) {
+        probabilities[frame] = 0.9F;
+    }
+    detector.setSequence(std::move(probabilities));
+    buffer.write(std::vector<float>(kFrameCount * kFrameSize, 0.5F));
+
+    capture.transcribeLast();
+
+    QTRY_COMPARE(transcriber.callCount(), 1);
+    QVERIFY(!capture.hasError());
+}
+
+// A higher minimum speech duration rejects a fragment that the default guard
+// would have accepted.
+void TestAudioCapture::test_minSpeechSecondsUpperBoundRejectsLongerSpeech() {
+    audio::AudioBuffer buffer(kVadBufferDuration, canonicalFormat());
+    FakeAudioSource source;
+    FakeTranscriber transcriber;
+    AudioCapture capture(buffer, source, transcriber);
+    FakeVoiceActivityDetector detector;
+    audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 2, 2});
+    capture.setVadGate(gate);
+    capture.setCaptureOptions(20, true, 3.0);
+
+    // Silence, 39 speech frames (19968 speech samples), silence. That is above
+    // the default 12000-sample guard but below 3.0 s (48000 samples).
+    constexpr std::size_t kFrameCount = 41;
+    std::vector<float> probabilities(kFrameCount, 0.05F);
+    for (std::size_t frame = 1; frame <= 39; ++frame) {
+        probabilities[frame] = 0.9F;
+    }
+    detector.setSequence(std::move(probabilities));
+    buffer.write(std::vector<float>(kFrameCount * kFrameSize, 0.5F));
+
+    const QSignalSpy kFailedSpy(&capture, &AudioCapture::failed);
+    capture.transcribeLast();
+
+    QTRY_COMPARE(kFailedSpy.count(), 1);
+    QCOMPARE(kFailedSpy.at(0).at(0).value<ProviderError>(), ProviderError::kInvalidResponse);
+    QCOMPARE(transcriber.callCount(), 0);
+    QVERIFY(capture.hasError());
 }
 
 QTEST_GUILESS_MAIN(TestAudioCapture)

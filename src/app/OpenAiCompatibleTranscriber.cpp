@@ -142,6 +142,12 @@ void OpenAiCompatibleTranscriber::setConfiguration(QString baseUrl, QString apiK
     apiKey_ = std::move(apiKey);
 }
 
+void OpenAiCompatibleTranscriber::setSpeechOptions(QString model, QString language, QString prompt) {
+    model_ = std::move(model);
+    language_ = std::move(language);
+    prompt_ = std::move(prompt);
+}
+
 void OpenAiCompatibleTranscriber::cancel() {
     // Synchronous, like Answer::cancel(): the caller asked for the abort now.
     if (abortActive()) {

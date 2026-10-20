@@ -21,6 +21,9 @@
 #include "FakeTranscriber.h"
 #include "audio/AudioBuffer.h"
 #include "domain/AudioCapture.h"
+#include "domain/CaptureConfigFile.h"
+#include "domain/CapturePresets.h"
+#include "domain/CaptureSettings.h"
 #include "domain/Chat.h"
 #include "domain/Chats.h"
 #include "domain/Message.h"
@@ -133,6 +136,8 @@ public:
     Harness()
         : configFile_(temporaryDirectory_.filePath(QStringLiteral("provider.env"))),
           settings_({}, {}, configFile_),
+          captureConfigFile_(temporaryDirectory_.filePath(QStringLiteral("capture.env"))),
+          captureSettings_({}, captureConfigFile_, &capturePresets_),
           providers_({ProviderOffer(QStringLiteral("fake"),
                                     QStringLiteral("Fake Provider"),
                                     [this] {
@@ -164,6 +169,7 @@ public:
                 {QStringLiteral("newChat"), QVariant::fromValue(&newChat_)},
                 {QStringLiteral("providerSettings"), QVariant::fromValue(&settings_)},
                 {QStringLiteral("audioCapture"), QVariant::fromValue(&audioCapture_)},
+                {QStringLiteral("captureSettings"), QVariant::fromValue(&captureSettings_)},
         });
         engine_.load(QUrl(QStringLiteral("qrc:/qt/qml/AudioAssistant/Main.qml")));
         // A delegate is only instantiated once the window is shown and polished;
@@ -182,6 +188,12 @@ public:
     }
     [[nodiscard]] const ProviderConfigFile& configFile() const noexcept {
         return configFile_;
+    }
+    [[nodiscard]] CaptureSettings& captureSettings() noexcept {
+        return captureSettings_;
+    }
+    [[nodiscard]] const CaptureConfigFile& captureConfigFile() const noexcept {
+        return captureConfigFile_;
     }
     [[nodiscard]] const std::vector<FakeProvider*>& minted() const noexcept {
         return minted_;
@@ -208,6 +220,9 @@ private:
     QTemporaryDir temporaryDirectory_;
     ProviderConfigFile configFile_;
     ProviderSettings settings_;
+    CaptureConfigFile captureConfigFile_;
+    CapturePresets capturePresets_;
+    CaptureSettings captureSettings_;
     std::vector<FakeProvider*> minted_;
     Providers providers_;
     Chats chats_;
@@ -278,6 +293,7 @@ private slots:
     void test_apiKeyFieldIsMasked();
     void test_saveButtonPersistsProviderSettings();
     void test_saveButtonAppliesWithoutLosingHistory();
+    void test_captureSettingsPanelSavesTheDuration();
 };
 
 TestQmlChat::TestQmlChat(QObject* parent) : QObject(parent) {
@@ -762,6 +778,27 @@ void TestQmlChat::test_saveButtonAppliesWithoutLosingHistory() {
     QCOMPARE(harness.chats().at(0), chat);
     QCOMPARE(harness.minted().size(), kMintedBefore + 1);
     QCOMPARE(chat->messages().size(), std::size_t{2});
+}
+
+// Smoke test for the capture settings panel: the dialog opens, the duration is
+// edited, and Save persists it through the C++ command.
+void TestQmlChat::test_captureSettingsPanelSavesTheDuration() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    QVERIFY(openSettingsDialog(harness) != nullptr);
+
+    QObject* spinBox = harness.child(QStringLiteral("captureDurationSpinBox"));
+    QObject* saveButton = harness.child(QStringLiteral("saveCaptureSettingsButton"));
+    QVERIFY(spinBox != nullptr);
+    QVERIFY(saveButton != nullptr);
+    QCOMPARE(spinBox->property("value").toInt(), 20);
+
+    QVERIFY(spinBox->setProperty("value", 45));
+    QVERIFY(QMetaObject::invokeMethod(saveButton, "clicked"));
+
+    QVERIFY(harness.captureSettings().lastError().isEmpty());
+    QCOMPARE(harness.captureSettings().captureDurationSeconds(), 45);
+    QVERIFY(readTextFile(harness.captureConfigFile().path()).contains(QStringLiteral("AA_CAPTURE_SECONDS=45")));
 }
 
 QTEST_MAIN(TestQmlChat)

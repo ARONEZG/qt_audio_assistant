@@ -20,6 +20,10 @@
 #include "audio/SileroVoiceActivityDetector.h"
 #include "audio/VadSpeechGate.h"
 #include "domain/AudioCapture.h"
+#include "domain/CaptureConfigFile.h"
+#include "domain/CaptureConfigSource.h"
+#include "domain/CapturePresets.h"
+#include "domain/CaptureSettings.h"
 #include "domain/Chat.h"
 #include "domain/Chats.h"
 #include "domain/NewChat.h"
@@ -28,10 +32,13 @@
 #include "domain/ProviderOffer.h"
 #include "domain/ProviderSettings.h"
 #include "domain/Providers.h"
-#include "domain/SttLanguage.h"
 #include "logging/LogBridge.hpp"
 
 namespace {
+
+// The largest capture window the user can select. The ring buffer is sized for
+// it; transcribeLast() trims the snapshot down to the currently selected window.
+constexpr int kMaxCaptureSeconds = 120;
 
 // Where the user's persisted provider endpoint/model live. QStandardPaths picks
 // the per-user application config directory on each supported desktop, so no
@@ -44,23 +51,44 @@ namespace {
     return QDir(kDirectory).filePath(QStringLiteral("provider.env"));
 }
 
-// Startup configuration: the persisted file with the real environment overriding
-// it per value (the API key is read only from the environment or the user's
-// input, never from the file). A read or key problem is reported and never stops
-// startup.
-[[nodiscard]] ProviderConfigSource::Result resolveStartupConfig(const ProviderConfigFile& file) {
-    const ProviderConfigSource::Result kResult =
-            ProviderConfigSource(file, QProcessEnvironment::systemEnvironment()).resolve();
-    if (!kResult.ok()) {
-        qWarning().noquote() << kResult.error;
+// Capture and transcription settings live in their own file next to the
+// provider configuration: the two concerns are saved by different panels and
+// must not overwrite each other.
+[[nodiscard]] QString captureConfigPath() {
+    const QString kDirectory = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    if (kDirectory.isEmpty()) {
+        return {};
     }
-    if (kResult.apiKey.isEmpty()) {
+    return QDir(kDirectory).filePath(QStringLiteral("capture.env"));
+}
+
+// Both persisted configurations, resolved once at startup. The real process
+// environment overrides the speech-to-text fields per value (see the sources);
+// the API key is read only from the environment. A read or key problem is
+// reported and never stops startup.
+struct StartupConfig {
+    ProviderConfigSource::Result provider;
+    CaptureConfigSource::Result capture;
+};
+
+[[nodiscard]] StartupConfig resolveStartupConfig(const ProviderConfigFile& providerFile,
+                                                 const CaptureConfigFile& captureFile) {
+    const QProcessEnvironment kEnvironment = QProcessEnvironment::systemEnvironment();
+    StartupConfig startup{ProviderConfigSource(providerFile, kEnvironment).resolve(),
+                          CaptureConfigSource(captureFile, kEnvironment).resolve()};
+    if (!startup.provider.ok()) {
+        qWarning().noquote() << startup.provider.error;
+    }
+    if (startup.provider.apiKey.isEmpty()) {
         qWarning(
                 "POLZA_API_KEY is not set: set it in the environment or enter it in the provider "
                 "settings panel; until then the OpenAI-compatible provider reports an "
                 "authentication error.");
     }
-    return kResult;
+    if (!startup.capture.ok()) {
+        qWarning().noquote() << startup.capture.error;
+    }
+    return startup;
 }
 
 // Builds the providers offered for selection. The network recipe reads the live
@@ -80,29 +108,6 @@ namespace {
     };
 }
 
-// Speech-to-text options are separate from the chat model (POLZA_MODEL): they
-// are read from the environment with sensible defaults and are deliberately not
-// part of the persisted provider settings. A missing/empty model falls back to
-// whisper-1; language/prompt are resolved by the domain helpers (language
-// defaults to "ru", prompt is omitted when empty).
-struct SttOptions {
-    QString model;
-    QString language;
-    QString prompt;
-};
-
-[[nodiscard]] QString sttModelFromEnvironment(const QProcessEnvironment& environment) {
-    const QString kConfigured = environment.value(QStringLiteral("POLZA_STT_MODEL"));
-    return kConfigured.isEmpty() ? QStringLiteral("openai/whisper-1") : kConfigured;
-}
-
-[[nodiscard]] SttOptions sttOptionsFromEnvironment() {
-    const QProcessEnvironment kEnvironment = QProcessEnvironment::systemEnvironment();
-    return {sttModelFromEnvironment(kEnvironment),
-            sttLanguageFromEnvironment(kEnvironment),
-            sttPromptFromEnvironment(kEnvironment)};
-}
-
 // The objects the QML module binds to, grouped so the loader takes one argument
 // instead of one per view model. Pointers rather than references: the guideline
 // forbids reference data members.
@@ -112,6 +117,7 @@ struct Composition {
     NewChat* newChat;
     ProviderSettings* settings;
     AudioCapture* audioCapture;
+    CaptureSettings* captureSettings;
 };
 
 // Loads the root QML component and hands the composition objects to it. False
@@ -123,6 +129,7 @@ struct Composition {
             {QStringLiteral("newChat"), QVariant::fromValue(composition.newChat)},
             {QStringLiteral("providerSettings"), QVariant::fromValue(composition.settings)},
             {QStringLiteral("audioCapture"), QVariant::fromValue(composition.audioCapture)},
+            {QStringLiteral("captureSettings"), QVariant::fromValue(composition.captureSettings)},
     });
     engine.load(QUrl(QStringLiteral("qrc:/qt/qml/AudioAssistant/Main.qml")));
     return !engine.rootObjects().isEmpty();
@@ -151,8 +158,9 @@ void wireCaptureSwitch(Chat& chat, AudioCapture& audioCapture, audio::MiniaudioC
 // Keeps the transcriber's endpoint/key in sync with the live settings and logs
 // the startup configuration once. The API key is a session secret entered in the
 // settings panel (never persisted), so a transcriber frozen at startup would
-// otherwise keep an empty or stale key and reject every request. The speech-to-
-// text model is a separate concern (POLZA_STT_MODEL) and stays fixed.
+// otherwise keep an empty or stale key and reject every request. The
+// speech-to-text model/language/prompt are a separate concern and are kept in
+// sync by wireCaptureSettings().
 void wireTranscriberSettings(ProviderSettings& settings,
                              OpenAiCompatibleTranscriber& transcriber,
                              const QString& sttModel) {
@@ -169,6 +177,26 @@ void wireTranscriberSettings(ProviderSettings& settings,
                       << (settings.baseUrl().isEmpty() ? QStringLiteral("<unset>") : settings.baseUrl())
                       << "apiKey=" << (settings.apiKey().isEmpty() ? QStringLiteral("<unset>") : QStringLiteral("set"))
                       << "model=" << sttModel;
+}
+
+// Applies saved capture settings to the live pipeline: the next request uses the
+// new window, VAD/guard options and speech-to-text model/language/context. The
+// log reports the effective values so a "saved but not applied" scenario is
+// diagnosable without inferring state.
+void wireCaptureSettings(CaptureSettings& settings,
+                         AudioCapture& audioCapture,
+                         OpenAiCompatibleTranscriber& transcriber) {
+    QObject::connect(&settings, &CaptureSettings::saved, &audioCapture, [&settings, &audioCapture, &transcriber] {
+        audioCapture.setCaptureOptions(
+                settings.captureDurationSeconds(), settings.vadEnabled(), settings.minSpeechSeconds());
+        transcriber.setSpeechOptions(settings.sttModel(), settings.sttLanguage(), settings.sttPrompt());
+        qInfo().noquote() << "Capture settings updated:" << "windowSeconds=" << settings.captureDurationSeconds()
+                          << "vad=" << settings.vadEnabled() << "minSpeechSeconds=" << settings.minSpeechSeconds()
+                          << "model=" << settings.sttModel() << "language="
+                          << (settings.sttLanguage().isEmpty() ? QStringLiteral("<auto>") : settings.sttLanguage())
+                          << "prompt="
+                          << (settings.sttPrompt().isEmpty() ? QStringLiteral("<none>") : settings.sttPrompt());
+    });
 }
 
 // The optional VAD pipeline: the Silero detector (model from the embedded Qt
@@ -199,6 +227,49 @@ struct VadPipeline {
     }
 }
 
+// The capture pipeline owned by main() for the whole event loop. Members are
+// declared in dependency order - the buffer before the source that writes into
+// it, then the transcriber, the VAD pipeline and the facade that borrows all of
+// them - so destruction runs in the opposite order. The composition root wires
+// the resolved capture configuration in once; later changes arrive through
+// CaptureSettings::saved (wireCaptureSettings).
+class CapturePipeline {
+public:
+    CapturePipeline(audio::AudioFormat format, ProviderSettings& providerSettings, const CaptureConfig& config)
+        : buffer_(std::chrono::seconds{kMaxCaptureSeconds}, format),
+          source_(buffer_),
+          transcriber_(providerSettings.baseUrl(),
+                       providerSettings.apiKey(),
+                       config.sttModel,
+                       0,
+                       config.sttLanguage,
+                       config.sttPrompt),
+          vad_(createVadPipeline()),
+          capture_(buffer_, source_, transcriber_) {
+        if (vad_.gate != nullptr) {
+            capture_.setVadGate(*vad_.gate);
+        }
+        capture_.setCaptureOptions(config.captureDurationSeconds, config.vadEnabled, config.minSpeechSeconds);
+    }
+
+    [[nodiscard]] AudioCapture& capture() noexcept {
+        return capture_;
+    }
+    [[nodiscard]] audio::MiniaudioCaptureSource& source() noexcept {
+        return source_;
+    }
+    [[nodiscard]] OpenAiCompatibleTranscriber& transcriber() noexcept {
+        return transcriber_;
+    }
+
+private:
+    audio::AudioBuffer buffer_;
+    audio::MiniaudioCaptureSource source_;
+    OpenAiCompatibleTranscriber transcriber_;
+    VadPipeline vad_;
+    AudioCapture capture_;
+};
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -210,12 +281,18 @@ int main(int argc, char* argv[]) {
     // convention, mirroring std::lock_guard.
     audio_assistant::log::LogBridge logBridge;  // NOLINT(misc-const-correctness)
 
-    // Composition root. The live ProviderSettings object is the single source
-    // the provider recipe reads, so a saved change affects the next minted chat.
+    // Composition root. The live settings objects are the single source the
+    // provider recipe and the capture pipeline read; a saved change affects the
+    // next minted chat / transcription.
     const ProviderConfigFile kConfigFile(providerConfigPath());
-    const ProviderConfigSource::Result kStartup = resolveStartupConfig(kConfigFile);
-    // Not const: edited from QML and read through a reference by the recipe.
-    ProviderSettings settings(kStartup.config, kStartup.apiKey, kConfigFile);
+    const CaptureConfigFile kCaptureConfigFile(captureConfigPath());
+    const StartupConfig kStartup = resolveStartupConfig(kConfigFile, kCaptureConfigFile);
+    // Not const: edited from QML and read through references by the recipes.
+    ProviderSettings settings(kStartup.provider.config, kStartup.provider.apiKey, kConfigFile);
+    // The presets are owned here and borrowed by the settings view model; the
+    // capture file is owned by CaptureSettings (the persistence command).
+    CapturePresets capturePresets;
+    CaptureSettings captureSettings(kStartup.capture.config, kCaptureConfigFile, &capturePresets);
     Chats chats;
     Providers providers(providerOffers(settings));
     NewChat newChat(chats, providers);
@@ -228,37 +305,23 @@ int main(int argc, char* argv[]) {
         (void)newChat.open(providers.idAt(0));
     }
 
-    // The capture pipeline is owned here for the whole event loop; the source
-    // and the facade only borrow the parts. Declaration order is a lifetime
-    // contract: the buffer is declared before the source that writes into it,
-    // and both before the facade that references them.
+    // The capture pipeline is owned here for the whole event loop: the buffer is
+    // sized for the largest selectable window and transcribeLast() trims each
+    // request to the configured (possibly shorter) one. Declaration order in
+    // CapturePipeline is a lifetime contract, as is declaring the pipeline
+    // before the engine that exposes it to QML.
     const audio::AudioFormat kCaptureFormat(16000U, 1U, audio::SampleFormat::kFloat32);
-    audio::AudioBuffer captureBuffer(std::chrono::seconds(30), kCaptureFormat);
-    audio::MiniaudioCaptureSource captureSource(captureBuffer);
-    const SttOptions kStt = sttOptionsFromEnvironment();
-    OpenAiCompatibleTranscriber transcriber(
-            settings.baseUrl(), settings.apiKey(), kStt.model, 0, kStt.language, kStt.prompt);
-
-    // The VAD pipeline trims silence before transcription. The Silero model is
-    // an embedded Qt resource (audio-assistant-models); the detector reads it
-    // through ":models/silero_vad/silero_vad.onnx" and is never downloaded.
-    // The detector and gate are declared before the facade they feed and live
-    // for the whole event loop (lifetime contract, same as captureBuffer).
-    const VadPipeline kVad = createVadPipeline();
-
-    AudioCapture audioCapture(captureBuffer, captureSource, transcriber);
-    if (kVad.gate != nullptr) {
-        audioCapture.setVadGate(*kVad.gate);
-    }
-    wireTranscriberSettings(settings, transcriber, kStt.model);
+    CapturePipeline pipeline(kCaptureFormat, settings, kStartup.capture.config);
+    wireTranscriberSettings(settings, pipeline.transcriber(), kStartup.capture.config.sttModel);
+    wireCaptureSettings(captureSettings, pipeline.capture(), pipeline.transcriber());
 
     // The chat's capture switch drives the pipeline. Capture does not start at
     // launch: it runs only while the switch is on.
     if (Chat* chat = chats.at(0); chat != nullptr) {
-        wireCaptureSwitch(*chat, audioCapture, captureSource);
+        wireCaptureSwitch(*chat, pipeline.capture(), pipeline.source());
     }
 
     QQmlApplicationEngine engine;
-    const Composition kComposition{&chats, &providers, &newChat, &settings, &audioCapture};
+    const Composition kComposition{&chats, &providers, &newChat, &settings, &pipeline.capture(), &captureSettings};
     return loadMainQml(engine, kComposition) ? app.exec() : -1;
 }

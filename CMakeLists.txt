@@ -401,6 +401,11 @@ qt_add_resources(audio-assistant-models "silero_vad_models"
 add_library(audio-assistant-domain STATIC
     src/domain/Answer.cpp
     src/domain/AudioCapture.cpp
+    src/domain/CaptureConfig.cpp
+    src/domain/CaptureConfigFile.cpp
+    src/domain/CaptureConfigSource.cpp
+    src/domain/CapturePresets.cpp
+    src/domain/CaptureSettings.cpp
     src/domain/Chat.cpp
     src/domain/Chats.cpp
     src/domain/Message.cpp
@@ -463,6 +468,7 @@ set(_audio_assistant_qml_files
     qml/ChatPanel.qml
     qml/ChatView.qml
     qml/ProviderSettingsPanel.qml
+    qml/CaptureSettingsPanel.qml
     qml/SettingsDialog.qml
 )
 
@@ -588,6 +594,21 @@ audio_assistant_add_domain_test(tst_newchat
 )
 audio_assistant_add_domain_test(tst_provider_config
     tests/tst_provider_config.cpp
+)
+audio_assistant_add_domain_test(tst_capture_config
+    tests/tst_capture_config.cpp
+)
+audio_assistant_add_domain_test(tst_capture_config_file
+    tests/tst_capture_config_file.cpp
+)
+audio_assistant_add_domain_test(tst_capture_config_source
+    tests/tst_capture_config_source.cpp
+)
+audio_assistant_add_domain_test(tst_capture_presets
+    tests/tst_capture_presets.cpp
+)
+audio_assistant_add_domain_test(tst_capture_settings
+    tests/tst_capture_settings.cpp
 )
 audio_assistant_add_domain_test(tst_stt_language
     tests/tst_stt_language.cpp

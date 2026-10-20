@@ -19,6 +19,7 @@ ApplicationWindow {
     required property NewChat newChat
     required property ProviderSettings providerSettings
     required property AudioCapture audioCapture
+    required property CaptureSettings captureSettings
 
     title: qsTr("Audio Assistant")
     visible: true
@@ -71,6 +72,7 @@ ApplicationWindow {
 
         providers: window.providers
         settings: window.providerSettings
+        captureSettings: window.captureSettings
 
         // Switching the provider or saving the endpoint/model/key applies the
         // new provider to the open chat, keeping its conversation: the chat
