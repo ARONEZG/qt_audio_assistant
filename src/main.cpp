@@ -80,12 +80,27 @@ namespace {
     };
 }
 
-// The speech-to-text model is separate from the chat model (POLZA_MODEL): it is
-// read from the environment only with a whisper-1 default, and is deliberately
-// not part of the persisted provider settings.
-[[nodiscard]] QString sttModelFromEnvironment() {
-    const QString kConfigured = QProcessEnvironment::systemEnvironment().value(QStringLiteral("POLZA_STT_MODEL"));
+// Speech-to-text options are separate from the chat model (POLZA_MODEL): they
+// are read from the environment with sensible defaults and are deliberately not
+// part of the persisted provider settings. A missing/empty model falls back to
+// whisper-1; language/prompt are resolved by the domain helpers (language
+// defaults to "ru", prompt is omitted when empty).
+struct SttOptions {
+    QString model;
+    QString language;
+    QString prompt;
+};
+
+[[nodiscard]] QString sttModelFromEnvironment(const QProcessEnvironment& environment) {
+    const QString kConfigured = environment.value(QStringLiteral("POLZA_STT_MODEL"));
     return kConfigured.isEmpty() ? QStringLiteral("openai/whisper-1") : kConfigured;
+}
+
+[[nodiscard]] SttOptions sttOptionsFromEnvironment() {
+    const QProcessEnvironment kEnvironment = QProcessEnvironment::systemEnvironment();
+    return {sttModelFromEnvironment(kEnvironment),
+            sttLanguageFromEnvironment(kEnvironment),
+            sttPromptFromEnvironment(kEnvironment)};
 }
 
 // The objects the QML module binds to, grouped so the loader takes one argument
@@ -173,8 +188,10 @@ struct VadPipeline {
 [[nodiscard]] VadPipeline createVadPipeline() {
     try {
         auto detector = std::make_unique<audio::SileroVoiceActivityDetector>();
+        // minSilenceFrames 16 = 512 ms: a natural pause inside a question no
+        // longer cuts its tail off into a separate (discarded) interval.
         auto gate = std::make_unique<audio::VadSpeechGate>(*detector,
-                                                           audio::SpeechSegmenter::Parameters{0.5F, 0.15F, 8, 4});
+                                                           audio::SpeechSegmenter::Parameters{0.5F, 0.15F, 8, 16});
         return {std::move(detector), std::move(gate)};
     } catch (const std::exception& error) {
         qWarning() << "Voice activity detection disabled:" << error.what();
@@ -218,9 +235,9 @@ int main(int argc, char* argv[]) {
     const audio::AudioFormat kCaptureFormat(16000U, 1U, audio::SampleFormat::kFloat32);
     audio::AudioBuffer captureBuffer(std::chrono::seconds(30), kCaptureFormat);
     audio::MiniaudioCaptureSource captureSource(captureBuffer);
-    const QString kSttModel = sttModelFromEnvironment();
-    const QString kSttLanguage = sttLanguageFromEnvironment(QProcessEnvironment::systemEnvironment());
-    OpenAiCompatibleTranscriber transcriber(settings.baseUrl(), settings.apiKey(), kSttModel, 0, kSttLanguage);
+    const SttOptions kStt = sttOptionsFromEnvironment();
+    OpenAiCompatibleTranscriber transcriber(
+            settings.baseUrl(), settings.apiKey(), kStt.model, 0, kStt.language, kStt.prompt);
 
     // The VAD pipeline trims silence before transcription. The Silero model is
     // an embedded Qt resource (audio-assistant-models); the detector reads it
@@ -233,7 +250,7 @@ int main(int argc, char* argv[]) {
     if (kVad.gate != nullptr) {
         audioCapture.setVadGate(*kVad.gate);
     }
-    wireTranscriberSettings(settings, transcriber, kSttModel);
+    wireTranscriberSettings(settings, transcriber, kStt.model);
 
     // The chat's capture switch drives the pipeline. Capture does not start at
     // launch: it runs only while the switch is on.

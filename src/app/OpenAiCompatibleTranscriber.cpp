@@ -62,15 +62,21 @@ QString httpErrorMessage(int status, const QByteArray& body) {
 
 }  // namespace
 
-// 6 params: baseUrl, apiKey, model, transferTimeoutMs, language, parent.
+// 7 params: baseUrl, apiKey, model, transferTimeoutMs, language, prompt, parent.
 // NOLINTNEXTLINE(readability-function-size)
-OpenAiCompatibleTranscriber::OpenAiCompatibleTranscriber(
-        QString baseUrl, QString apiKey, QString model, int transferTimeoutMs, QString language, QObject* parent)
+OpenAiCompatibleTranscriber::OpenAiCompatibleTranscriber(QString baseUrl,
+                                                         QString apiKey,
+                                                         QString model,
+                                                         int transferTimeoutMs,
+                                                         QString language,
+                                                         QString prompt,
+                                                         QObject* parent)
     : TranscriptionProvider(parent),
       baseUrl_(std::move(baseUrl)),
       apiKey_(std::move(apiKey)),
       model_(std::move(model)),
       language_(std::move(language)),
+      prompt_(std::move(prompt)),
       network_(new QNetworkAccessManager(this)) {
     if (transferTimeoutMs > 0) {
         network_->setTransferTimeout(transferTimeoutMs);
@@ -110,26 +116,23 @@ void OpenAiCompatibleTranscriber::transcribe(std::vector<float> samples) {
         scheduleFailure(ProviderError::kCancelled, QStringLiteral("Transcription superseded by a newer request"));
     }
 
+    QElapsedTimer encodeTimer;
+    encodeTimer.start();
     const std::vector<std::uint8_t> kWav = audio::encodeWavPcm16(canonicalFormat(), samples);
     const QByteArray kFile =
             QByteArray(kWavDataUrlPrefix) +
             QByteArray(reinterpret_cast<const char*>(kWav.data()), static_cast<qsizetype>(kWav.size())).toBase64();
 
-    QJsonObject kPayload{
-            {QStringLiteral("model"), model_},
-            {QStringLiteral("file"), QString::fromLatin1(kFile)},
-            {QStringLiteral("response_format"), QStringLiteral("json")},
-            {QStringLiteral("temperature"), 0.0},
-    };
-    if (!language_.isEmpty()) {
-        kPayload.insert(QStringLiteral("language"), language_);
-    }
+    const QJsonObject kPayload = buildPayload(kFile);
+    const qint64 kEncodeMs = encodeTimer.elapsed();
 
     QNetworkRequest request{QUrl(transcribeUrl())};
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request.setRawHeader(QByteArrayLiteral("Authorization"), QByteArrayLiteral("Bearer ") + apiKey_.toUtf8());
     qInfo().noquote() << "Transcription request:" << transcribeUrl() << "model=" << model_
-                      << "samples=" << samples.size() << "wavBytes=" << kWav.size();
+                      << "language=" << (language_.isEmpty() ? QStringLiteral("<auto>") : language_)
+                      << "samples=" << samples.size() << "wavBytes=" << kWav.size() << "encodeMs=" << kEncodeMs;
+    requestTimer_.start();
     reply_ = network_->post(request, QJsonDocument(kPayload).toJson(QJsonDocument::Compact));
     connect(reply_, &QNetworkReply::finished, this, &OpenAiCompatibleTranscriber::onReplyFinished);
 }
@@ -172,6 +175,9 @@ void OpenAiCompatibleTranscriber::onReplyFinished() {
 
     const int kStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const QByteArray kBody = reply->readAll();
+    const qint64 kRoundTripMs = requestTimer_.isValid() ? requestTimer_.elapsed() : -1;
+    requestTimer_.invalidate();
+    qInfo() << "Transcription timing: roundTripMs=" << kRoundTripMs << "httpStatus=" << kStatus;
 
     // A transport failure leaves the HTTP status unset; the reply's own error
     // string is the most precise detail available.
@@ -209,6 +215,23 @@ void OpenAiCompatibleTranscriber::emitResult(const QByteArray& body) {
     }
     qInfo() << "Transcription succeeded:" << kText.toString();
     emit transcribed(kText.toString());
+}
+
+QJsonObject OpenAiCompatibleTranscriber::buildPayload(const QByteArray& file) const {
+    QJsonObject payload{
+            {QStringLiteral("model"), model_},
+            {QStringLiteral("file"), QString::fromLatin1(file)},
+            {QStringLiteral("response_format"), QStringLiteral("json")},
+            // Deterministic decoding: no sampling surprises in a transcript.
+            {QStringLiteral("temperature"), 0.0},
+    };
+    if (!language_.isEmpty()) {
+        payload.insert(QStringLiteral("language"), language_);
+    }
+    if (!prompt_.isEmpty()) {
+        payload.insert(QStringLiteral("prompt"), prompt_);
+    }
+    return payload;
 }
 
 QString OpenAiCompatibleTranscriber::transcribeUrl() const {

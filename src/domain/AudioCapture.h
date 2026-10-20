@@ -4,6 +4,7 @@
 
 #include <QObject>
 #include <QString>
+#include <vector>
 
 #include "audio/AudioFormat.h"
 #include "domain/ProviderError.h"
@@ -75,11 +76,12 @@ public:
                  QObject* parent = nullptr);
     ~AudioCapture() override;
 
-    // Attaches the voice-activity gate that trims silence before transcribing.
-    // The gate is optional: without it the whole buffer is sent (the historical
-    // behaviour). When present, transcribeLast() sends only the samples inside
-    // the detected speech intervals. The gate is borrowed and must outlive this
-    // object.
+    // Attaches the voice-activity gate that selects the last utterance before
+    // transcribing. The gate is optional: without it the whole buffer is sent
+    // (the historical behaviour). When present, transcribeLast() sends only the
+    // last detected speech interval, extended by a short pre-roll/post-roll so
+    // word boundaries are not clipped, instead of the whole capture window. The
+    // gate is borrowed and must outlive this object.
     void setVadGate(audio::VadSpeechGate& gate);
 
     // Starts/stops capture; a thin command over the injected source. Idempotent
@@ -87,11 +89,15 @@ public:
     Q_INVOKABLE void start();
     Q_INVOKABLE void stop();
 
-    // Sends a snapshot of the whole buffer to the transcriber. The terminal
-    // result arrives later through transcribed()/failed() (the
-    // TranscriptionProvider contract: transcribe() never emits synchronously).
-    // An empty buffer is sent as an empty block rather than skipped. Starts a new
-    // request, so a previous failure is cleared.
+    // Sends a snapshot of the buffer to the transcriber. The transcriber's
+    // terminal result arrives later through transcribed()/failed() (the
+    // TranscriptionProvider contract: its transcribe() never emits
+    // synchronously). Local rejections - no VAD speech or a fragment below the
+    // minimum duration - are different: they never reach the network and are
+    // emitted synchronously from this command through failed(), so the caller
+    // sees the reason immediately. Without a VAD gate an empty buffer is sent
+    // as an empty block. Starts a new request, so a previous failure is
+    // cleared.
     Q_INVOKABLE void transcribeLast();
 
     // The stream format of the injected source; a pure query.
@@ -110,6 +116,13 @@ private:
     void onTranscribed(const QString& text);
     void onFailed(ProviderError error, const QString& message);
     void clearError();
+
+    // Replaces `snapshot` with the last detected utterance plus its pre/post
+    // roll and enforces the minimum transcribable speech duration (padding is
+    // not counted as speech). Returns false after reporting a local failure
+    // (no speech / too short) when the caller must not call the transcriber.
+    // The gate must have been attached and the snapshot must be non-empty.
+    [[nodiscard]] bool selectLastUtterance(audio::VadSpeechGate& gate, std::vector<float>& snapshot, qint64 snapshotMs);
 
     audio::AudioBuffer& buffer_;
     audio::AudioSource& source_;

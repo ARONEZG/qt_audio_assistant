@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QString>
 #include <vector>
@@ -10,6 +11,7 @@
 class QNetworkAccessManager;
 class QNetworkReply;
 class QByteArray;
+class QJsonObject;
 
 // Concrete transcription provider for an OpenAI-compatible speech-to-text
 // endpoint (the MVP's "Polza AI" is one such endpoint; the URL, model and key
@@ -34,8 +36,10 @@ class QByteArray;
 //
 // The speech-to-text model is a separate concern from the chat model
 // (POLZA_MODEL): it is a constructor parameter with an explicit default of
-// openai/whisper-1. Wiring an environment variable for it belongs to the
-// composition increment, not to this adapter.
+// openai/whisper-1. The optional language and prompt are injected the same way
+// (POLZA_STT_LANGUAGE / POLZA_STT_PROMPT in the composition root); the adapter
+// sends them only when non-empty, and always pins temperature to 0 so the
+// transcript stays deterministic.
 //
 // Configuration is injected through the constructor. A transcriber with missing
 // configuration is still valid - it fails each request with a typed error
@@ -48,12 +52,15 @@ class OpenAiCompatibleTranscriber : public TranscriptionProvider {
 public:
     // transferTimeoutMs > 0 overrides QNetworkAccessManager's transfer timeout
     // for this transcriber (a stalled endpoint must still produce exactly one
-    // terminal signal); <= 0 keeps the manager's default.
+    // terminal signal); <= 0 keeps the manager's default. language/prompt are
+    // optional: an empty value means the field is omitted from the payload
+    // (language then falls back to endpoint autodetection).
     explicit OpenAiCompatibleTranscriber(QString baseUrl,
                                          QString apiKey,
                                          QString model = QStringLiteral("openai/whisper-1"),
                                          int transferTimeoutMs = 0,
                                          QString language = QStringLiteral("ru"),
+                                         QString prompt = {},
                                          QObject* parent = nullptr);
     ~OpenAiCompatibleTranscriber() override;
 
@@ -90,12 +97,20 @@ private:
     // from onReplyFinished so each method stays small and single-purpose.
     void emitResult(const QByteArray& body);
 
+    // Builds the JSON request body. Kept separate from transcribe() so the
+    // request shape (including the optional language/prompt fields and the
+    // always-zero temperature) is one small, reviewable unit.
+    [[nodiscard]] QJsonObject buildPayload(const QByteArray& file) const;
     [[nodiscard]] QString transcribeUrl() const;
 
     QString baseUrl_;
     QString apiKey_;
     QString model_;
     QString language_;
+    QString prompt_;
     QNetworkAccessManager* network_;
     QNetworkReply* reply_ = nullptr;
+    // Started right before the POST and read on finished(): the round-trip part
+    // of the latency budget (encode is timed separately in transcribe()).
+    QElapsedTimer requestTimer_;
 };
