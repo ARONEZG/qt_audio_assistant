@@ -37,7 +37,7 @@ class QJsonObject;
 // The speech-to-text model is a separate concern from the chat model
 // (POLZA_MODEL): it is a constructor parameter with an explicit default of
 // openai/whisper-1. The optional language and prompt are injected the same way
-// (POLZA_STT_LANGUAGE / POLZA_STT_PROMPT in the composition root); the adapter
+// (resolved from the capture settings by the composition root); the adapter
 // sends them only when non-empty, and always pins temperature to 0 so the
 // transcript stays deterministic.
 //
@@ -70,10 +70,16 @@ public:
     // provider (rebuilt from live settings on each mint), this adapter is built
     // once at startup; the composition root calls this when the user saves
     // provider settings, so a key entered in the settings panel - a session
-    // secret that is never persisted - reaches transcription. The model stays
-    // fixed: it is the speech-to-text model (POLZA_STT_MODEL), a separate
-    // concern from the chat model held in the provider settings.
+    // secret that is never persisted - reaches transcription. The speech-to-text
+    // model/language/prompt are a separate concern and are updated through
+    // setSpeechOptions() when capture settings are saved.
     void setConfiguration(QString baseUrl, QString apiKey);
+
+    // Updates the speech-to-text model and the optional language/prompt for
+    // subsequent requests. Called by the composition root when the user saves
+    // capture settings. An empty language/prompt means the corresponding field
+    // is omitted from the payload, exactly as at construction.
+    void setSpeechOptions(QString model, QString language, QString prompt);
 
     // Aborts the in-flight request (if any) and reports it as
     // failed(ProviderError::kCancelled). Synchronous, like Answer::cancel(); a

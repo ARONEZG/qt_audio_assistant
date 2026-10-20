@@ -18,6 +18,7 @@ Dialog {
 
     required property Providers providers
     required property ProviderSettings settings
+    required property CaptureSettings captureSettings
 
     // The provider whose (possibly just saved) configuration must be applied.
     signal providerApplied(string providerId)
@@ -30,10 +31,10 @@ Dialog {
     objectName: "settingsDialog"
     title: qsTr("Settings")
     modal: true
-    width: 420
-    // Sized to fit the provider picker and the settings form (including its error
-    // line) without clipping.
-    height: 420
+    width: 460
+    // Tall enough for both configuration panels; the content scrolls when the
+    // window (or a future panel) makes it taller than this.
+    height: 640
     // Dialog is a popup, not an item; its anchors group is the supported way to
     // centre it over the window.
     anchors.centerIn: parent
@@ -50,34 +51,45 @@ Dialog {
         }
     }
 
-    ColumnLayout {
+    ScrollView {
         anchors.fill: parent
-        spacing: Theme.spacingMedium
+        clip: true
+        contentWidth: availableWidth
 
-        Label {
-            text: qsTr("Provider")
-            color: Theme.textSecondary
-        }
+        ColumnLayout {
+            width: parent.width
+            spacing: Theme.spacingMedium
 
-        ComboBox {
-            id: picker
-
-            objectName: "providerPicker"
-            Layout.fillWidth: true
-            model: root.providers
-            textRole: "displayName"
-            valueRole: "id"
-            Accessible.name: qsTr("Provider")
-            Component.onCompleted: root.selectedProviderId = picker.currentValue
-            onActivated: index => {
-                root.selectedProviderId = picker.valueAt(index);
-                root.providerApplied(root.selectedProviderId);
+            Label {
+                text: qsTr("Provider")
+                color: Theme.textSecondary
             }
-        }
 
-        ProviderSettingsPanel {
-            Layout.fillWidth: true
-            settings: root.settings
+            ComboBox {
+                id: picker
+
+                objectName: "providerPicker"
+                Layout.fillWidth: true
+                model: root.providers
+                textRole: "displayName"
+                valueRole: "id"
+                Accessible.name: qsTr("Provider")
+                Component.onCompleted: root.selectedProviderId = picker.currentValue
+                onActivated: index => {
+                    root.selectedProviderId = picker.valueAt(index);
+                    root.providerApplied(root.selectedProviderId);
+                }
+            }
+
+            ProviderSettingsPanel {
+                Layout.fillWidth: true
+                settings: root.settings
+            }
+
+            CaptureSettingsPanel {
+                Layout.fillWidth: true
+                settings: root.captureSettings
+            }
         }
     }
 }
