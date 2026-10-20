@@ -40,7 +40,7 @@ Item {
             width: transcript.width
             height: streamingTail.visible ? streamingTail.implicitHeight + Theme.spacingTight : 0
 
-            Text {
+            SelectableText {
                 id: streamingTail
 
                 objectName: "streamingTail"
@@ -50,12 +50,9 @@ Item {
                 text: root.chat.streamingMarkup
                 // The live reply is assistant content: rendered as Markdown
                 // through the same C++ sanitisation boundary as a finished
-                // message.
-                textFormat: Text.MarkdownText
+                // message, and selectable while it streams.
+                textFormat: TextEdit.MarkdownText
                 color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeBody
-                wrapMode: Text.Wrap
-                Accessible.role: Accessible.StaticText
                 Accessible.name: qsTr("Assistant is replying")
             }
         }

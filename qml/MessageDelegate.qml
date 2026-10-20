@@ -28,25 +28,22 @@ Item {
         radius: Theme.radius
         color: root.isUser ? Theme.userBubble : Theme.assistantBubble
 
-        Text {
+        // Selectable so a reply can be copied out of the chat. The assistant may
+        // answer with Markdown (sanitised in C++); the user's own message is
+        // shown verbatim as plain text.
+        SelectableText {
             id: label
 
             objectName: "messageText"
             anchors.centerIn: parent
             width: parent.width - 2 * Theme.spacingMedium
             text: root.markup
-            // The assistant may answer with Markdown (sanitised in C++); the
-            // user's own message is shown verbatim as plain text.
-            textFormat: root.isUser ? Text.PlainText : Text.MarkdownText
-            color: Theme.textPrimary
-            font.pixelSize: Theme.fontSizeBody
-            wrapMode: Text.Wrap
+            textFormat: root.isUser ? TextEdit.PlainText : TextEdit.MarkdownText
             // Sanitisation in C++ leaves only http/https links, so activating one
             // can never hand the system a javascript:/data: URL.
             onLinkActivated: link => Qt.openUrlExternally(link)
             // A message is a text passage, not an interactive control; the
             // accessible name uses the raw text, not the Markdown escapes.
-            Accessible.role: Accessible.StaticText
             Accessible.name: root.isUser ? qsTr("You said: %1").arg(root.text) : qsTr("Assistant said: %1").arg(root.text)
         }
     }

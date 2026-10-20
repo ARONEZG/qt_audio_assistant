@@ -463,6 +463,7 @@ target_link_libraries(audio-assistant-domain
 set(_audio_assistant_qml_files
     qml/Main.qml
     qml/Theme.qml
+    qml/SelectableText.qml
     qml/MessageDelegate.qml
     qml/Composer.qml
     qml/ConversationView.qml
