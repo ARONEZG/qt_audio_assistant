@@ -85,6 +85,11 @@ public:
         // because a view shows it as plain text. The raw `text` role stays for
         // accessibility, so a screen reader never reads Markdown escapes.
         kMarkupRole,
+        // Whether the message carries an image, and that image as a QML-ready
+        // data URL. The URL is built lazily from the immutable attachment and
+        // memoised, because a view re-reads it on every layout pass.
+        kHasImageRole,
+        kImageSourceRole,
     };
 
     // The raw streaming text is appended per chunk (O(1)), but its sanitised
@@ -130,6 +135,13 @@ public:
     // view does not have to filter it. Invokable so the QML layer can call it
     // without extra glue.
     Q_INVOKABLE void send(const QString& text);
+    // Appends a user message carrying an image and asks the provider to answer.
+    // `caption` is optional message text shown with the image. Returns false when
+    // the image is empty (an attachment with no bytes is meaningless) or while an
+    // answer is already streaming, matching send()'s one-request invariant. Not
+    // invokable: the view never constructs an attachment itself; PasteImage is
+    // the command that turns the clipboard into one.
+    bool sendImage(ImageAttachment image, const QString& caption = QString());
     // Abandons the in-flight answer, if any, without appending a reply.
     Q_INVOKABLE void cancel();
 
@@ -157,6 +169,12 @@ private:
     [[nodiscard]] bool isValidRow(int index) const noexcept;
     // Display text of one row, sanitised on first request and memoised.
     [[nodiscard]] QString markupAt(std::size_t row) const;
+    // QML-ready data URL of one row's image, built on first request and
+    // memoised; empty for a text-only message.
+    [[nodiscard]] QString imageSourceAt(std::size_t row) const;
+    // Appends a user message and starts the request, enforcing the one-request
+    // invariant shared by send() and sendImage().
+    bool beginUserRequest(const Message& message);
 
     void appendMessage(const Message& message);
     void startStreaming();
@@ -193,6 +211,10 @@ private:
     // lays out; without the cache every query would re-parse the message. Filled
     // lazily so a headless consumer that never asks for markup never pays for it.
     mutable std::vector<std::optional<QString>> markupCache_;
+    // Data URL for each row's image, aligned index-for-index with messages_.
+    // Filled lazily like markupCache_: a data URL base64-encodes the whole image,
+    // so it must not be rebuilt on every view query.
+    mutable std::vector<std::optional<QString>> imageSourceCache_;
     // Raw text of the in-flight reply. It keeps accumulating per chunk and is
     // retained after the stream ends (streamingText() hides it once not
     // streaming) so the finished reply's markup stays available.

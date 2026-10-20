@@ -12,6 +12,7 @@
 #include "OpenAiMockServer.h"
 #include "app/OpenAiCompatibleProvider.h"
 #include "domain/Answer.h"
+#include "domain/ImageAttachment.h"
 #include "domain/Message.h"
 #include "domain/ProviderError.h"
 
@@ -104,6 +105,8 @@ private slots:
     void test_exposesIdentity();
     void test_streamsChunksAndCompletes();
     void test_mapsHistoryAndModelIntoTheRequest();
+    void test_mapsImageAsAnOpenAiContentPart();
+    void test_mapsImageOnlyMessageWithoutATextPart();
     void test_httpStatusIsClassified_data();
     void test_httpStatusIsClassified();
     void test_malformedFrameIsIgnoredAndStreamContinues();
@@ -186,6 +189,83 @@ void TestOpenAiProvider::test_mapsHistoryAndModelIntoTheRequest() {
     QCOMPARE(kMessages.at(1).toObject().value(QStringLiteral("role")).toString(), QStringLiteral("user"));
     QCOMPARE(kMessages.at(3).toObject().value(QStringLiteral("role")).toString(), QStringLiteral("user"));
     QCOMPARE(kMessages.at(3).toObject().value(QStringLiteral("content")).toString(), QStringLiteral("again"));
+}
+
+void TestOpenAiProvider::test_mapsImageAsAnOpenAiContentPart() {
+    OpenAiMockServer server;
+    QVERIFY(server.listen());
+    server.setHandler([](QTcpSocket& socket, const QByteArray&) {
+        writeChunkedHeaders(socket);
+        writeSseEvent(socket, contentChunk("ok"));
+        writeSseEvent(socket, finishChunk());
+        endChunked(socket);
+    });
+    const auto kProvider = makeProvider(server);
+
+    const QByteArray kImage("image-bytes");
+    const std::vector<Message> kHistory{
+            Message(MessageRole::kSystem, QStringLiteral("be nice")),
+            Message(MessageRole::kUser,
+                    QStringLiteral("what is this"),
+                    ImageAttachment(kImage, QStringLiteral("image/png"))),
+    };
+    Answer* answer = kProvider->respond(kHistory);
+    QSignalSpy kCompletedSpy(answer, &Answer::completed);
+    QVERIFY(kCompletedSpy.wait(kReplyTimeout));
+
+    const QJsonObject kPayload = QJsonDocument::fromJson(server.lastRequestBody()).object();
+    const QJsonArray kMessages = kPayload.value(QStringLiteral("messages")).toArray();
+    QCOMPARE(kMessages.size(), 2);
+    const QJsonObject kUser = kMessages.at(1).toObject();
+    QCOMPARE(kUser.value(QStringLiteral("role")).toString(), QStringLiteral("user"));
+    // A user turn with an image becomes a content-part array, not a plain string.
+    const QJsonArray kContent = kUser.value(QStringLiteral("content")).toArray();
+    QCOMPARE(kContent.size(), 2);
+    QCOMPARE(kContent.at(0).toObject().value(QStringLiteral("type")).toString(), QStringLiteral("text"));
+    QCOMPARE(kContent.at(0).toObject().value(QStringLiteral("text")).toString(), QStringLiteral("what is this"));
+
+    const QJsonObject kImagePart = kContent.at(1).toObject();
+    QCOMPARE(kImagePart.value(QStringLiteral("type")).toString(), QStringLiteral("image_url"));
+    const QString kUrl =
+            kImagePart.value(QStringLiteral("image_url")).toObject().value(QStringLiteral("url")).toString();
+    const QString kPrefix = QStringLiteral("data:image/png;base64,");
+    QVERIFY(kUrl.startsWith(kPrefix));
+    QCOMPARE(QByteArray::fromBase64(kUrl.mid(kPrefix.size()).toLatin1()), kImage);
+}
+
+void TestOpenAiProvider::test_mapsImageOnlyMessageWithoutATextPart() {
+    OpenAiMockServer server;
+    QVERIFY(server.listen());
+    server.setHandler([](QTcpSocket& socket, const QByteArray&) {
+        writeChunkedHeaders(socket);
+        writeSseEvent(socket, contentChunk("ok"));
+        writeSseEvent(socket, finishChunk());
+        endChunked(socket);
+    });
+    const auto kProvider = makeProvider(server);
+
+    const QByteArray kImage("image-bytes");
+    const std::vector<Message> kHistory{
+            Message(MessageRole::kUser, QString(), ImageAttachment(kImage, QStringLiteral("image/jpeg"))),
+    };
+    Answer* answer = kProvider->respond(kHistory);
+    QSignalSpy kCompletedSpy(answer, &Answer::completed);
+    QVERIFY(kCompletedSpy.wait(kReplyTimeout));
+
+    const QJsonObject kPayload = QJsonDocument::fromJson(server.lastRequestBody()).object();
+    const QJsonArray kMessages = kPayload.value(QStringLiteral("messages")).toArray();
+    QCOMPARE(kMessages.size(), 1);
+    const QJsonArray kContent = kMessages.at(0).toObject().value(QStringLiteral("content")).toArray();
+    // No caption means no empty text part: only the image is sent.
+    QCOMPARE(kContent.size(), 1);
+    QCOMPARE(kContent.at(0).toObject().value(QStringLiteral("type")).toString(), QStringLiteral("image_url"));
+    const QString kUrl = kContent.at(0)
+                                 .toObject()
+                                 .value(QStringLiteral("image_url"))
+                                 .toObject()
+                                 .value(QStringLiteral("url"))
+                                 .toString();
+    QVERIFY(kUrl.startsWith(QStringLiteral("data:image/jpeg;base64,")));
 }
 
 void TestOpenAiProvider::test_httpStatusIsClassified_data() {

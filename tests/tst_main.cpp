@@ -1,7 +1,9 @@
 #include <QClipboard>
 #include <QFile>
 #include <QGuiApplication>
+#include <QImage>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QMetaObject>
 #include <QObject>
 #include <QQmlApplicationEngine>
@@ -15,12 +17,15 @@
 #include <QtTest>
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "FakeAudioSource.h"
+#include "FakeClipboardImageSource.h"
 #include "FakeProvider.h"
 #include "FakeTranscriber.h"
+#include "app/ClipboardImageEncoder.h"
 #include "audio/AudioBuffer.h"
 #include "domain/AudioCapture.h"
 #include "domain/CaptureConfigFile.h"
@@ -28,8 +33,10 @@
 #include "domain/CaptureSettings.h"
 #include "domain/Chat.h"
 #include "domain/Chats.h"
+#include "domain/ImageAttachment.h"
 #include "domain/Message.h"
 #include "domain/NewChat.h"
+#include "domain/PasteImage.h"
 #include "domain/ProviderConfigFile.h"
 #include "domain/ProviderError.h"
 #include "domain/ProviderOffer.h"
@@ -190,6 +197,10 @@ public:
         // Mirror main(): the voice command sits between the capture facade and
         // the open chat and backs both Ctrl+R and the Transcribe button.
         voiceInput_ = std::make_unique<VoiceInput>(audioCapture_, chats_.at(0));
+        // Mirror main(): the clipboard adapter is behind the fake; the paste
+        // command shares the composer's Ctrl+V path. Encoding runs asynchronously
+        // through the real policy implementation.
+        pasteImage_ = std::make_unique<PasteImage>(clipboard_, encoder_);
         engine_.setInitialProperties({
                 {QStringLiteral("chats"), QVariant::fromValue(&chats_)},
                 {QStringLiteral("providers"), QVariant::fromValue(&providers_)},
@@ -198,6 +209,7 @@ public:
                 {QStringLiteral("audioCapture"), QVariant::fromValue(&audioCapture_)},
                 {QStringLiteral("captureSettings"), QVariant::fromValue(&captureSettings_)},
                 {QStringLiteral("voiceInput"), QVariant::fromValue(voiceInput_.get())},
+                {QStringLiteral("pasteImage"), QVariant::fromValue(pasteImage_.get())},
         });
         engine_.load(QUrl(QStringLiteral("qrc:/qt/qml/AudioAssistant/Main.qml")));
         // A delegate is only instantiated once the window is shown and polished;
@@ -235,6 +247,9 @@ public:
     [[nodiscard]] AudioCapture& capture() noexcept {
         return audioCapture_;
     }
+    [[nodiscard]] FakeClipboardImageSource& clipboard() noexcept {
+        return clipboard_;
+    }
     [[nodiscard]] QObject* root() const {
         return engine_.rootObjects().value(0);
     }
@@ -266,6 +281,11 @@ private:
     // Declared after the facade and the chats: destroyed before both, so the
     // command never outlives its collaborators.
     std::unique_ptr<VoiceInput> voiceInput_;
+    // The clipboard source is declared before the command that borrows it; both
+    // are destroyed before the engine that exposes the command to QML.
+    FakeClipboardImageSource clipboard_;
+    ClipboardImageEncoder encoder_;
+    std::unique_ptr<PasteImage> pasteImage_;
     QQmlApplicationEngine engine_;
 };
 
@@ -324,6 +344,60 @@ void clickWindow(QQuickWindow& window,
     QCoreApplication::processEvents();
 }
 
+// Sends the platform paste gesture to the focused composer. The sequence comes
+// from QKeySequence::Paste, so the test follows Cmd+V on macOS instead of
+// assuming Ctrl+V.
+void pressPasteShortcut(QQuickWindow& window) {
+    const QKeySequence kPaste(QKeySequence::Paste);
+    if (kPaste.isEmpty()) {
+        return;
+    }
+    const QKeyCombination kCombination = kPaste[0];
+    QKeyEvent press(QEvent::KeyPress, kCombination.key(), kCombination.keyboardModifiers());
+    QKeyEvent release(QEvent::KeyRelease, kCombination.key(), kCombination.keyboardModifiers());
+    QCoreApplication::sendEvent(&window, &press);
+    QCoreApplication::sendEvent(&window, &release);
+}
+
+// A real, decodable image so the QML Image reaches Ready instead of Error: the
+// test must exercise the preview, not only the data URL string. The real
+// encoder turns it into the PNG attachment the delegate decodes.
+[[nodiscard]] QImage tinyImage() {
+    QImage image(8, 8, QImage::Format_RGB32);
+    image.fill(Qt::red);
+    return image;
+}
+
+// True when the message carries the expected encoded image MIME type.
+[[nodiscard]] bool hasImageWithMime(const Message& message, const QString& mimeType) {
+    const std::optional<ImageAttachment>& kImage = message.image();
+    return kImage.has_value() && kImage->mimeType() == mimeType;
+}
+
+// Waits for the single message delegate's preview and returns the image item,
+// or nullptr if it never becomes visible.
+[[nodiscard]] QObject* waitForMessageImage(QQuickWindow* window) {
+    QObject* preview = nullptr;
+    const bool kFound = QTest::qWaitFor([window, &preview] {
+        const std::vector<QQuickItem*> kDelegates =
+                collectItems(window->contentItem(), QStringLiteral("messageDelegate"));
+        if (kDelegates.size() != 1) {
+            return false;
+        }
+        preview = findInItems(kDelegates.front(), QStringLiteral("messageImage"));
+        return preview != nullptr && preview->property("visible").toBool();
+    });
+    return kFound ? preview : nullptr;
+}
+
+// The preview must carry a data URL and decode to a non-empty, displayable image.
+[[nodiscard]] bool previewIsDisplayable(QObject* preview) {
+    return preview != nullptr &&
+           preview->property("source").toString().startsWith(QStringLiteral("data:image/png;base64,")) &&
+           QTest::qWaitFor([preview] { return preview->property("status").toInt() == 1; }) &&
+           preview->property("width").toReal() > 0;
+}
+
 }  // namespace
 
 // Offscreen smoke tests for the QML layer: the real module is loaded and driven
@@ -340,6 +414,8 @@ private slots:
     void test_openChatIsShownOnce();
     void test_settingsGearOpensTheDialog();
     void test_sendButtonForwardsTypedTextToTheChat();
+    void test_ctrlVPastesAClipboardImageIntoTimeline();
+    void test_pastedImageIsRenderedInTheTimeline();
     void test_streamingTailShowsTheLiveReply();
     void test_messageDelegateRendersAssistantMarkdownAndUserPlainText();
     void test_messageTextIsSelectableAndCopyable();
@@ -424,6 +500,56 @@ void TestQmlChat::test_sendButtonForwardsTypedTextToTheChat() {
     QCOMPARE(chat->messages().size(), std::size_t{1});
     QCOMPARE(chat->messages().at(0).text(), QStringLiteral("hi"));
     QCOMPARE(harness.minted().at(0)->lastHistory().size(), std::size_t{1});
+}
+
+void TestQmlChat::test_ctrlVPastesAClipboardImageIntoTimeline() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    harness.clipboard().setImage(tinyImage());
+
+    QObject* input = harness.child(QStringLiteral("messageInput"));
+    QVERIFY(input != nullptr);
+    auto* inputItem = qobject_cast<QQuickItem*>(input);
+    QVERIFY(inputItem != nullptr);
+    QVERIFY(input->setProperty("text", QStringLiteral("caption")));
+    inputItem->forceActiveFocus();
+    QCoreApplication::processEvents();
+
+    auto* window = qobject_cast<QQuickWindow*>(harness.root());
+    QVERIFY(window != nullptr);
+    pressPasteShortcut(*window);
+
+    // The composer forwards the paste gesture to the image command: the typed
+    // text becomes the caption and the field is cleared only once the image has
+    // actually been appended (encoding is asynchronous).
+    Chat* chat = harness.chats().at(0);
+    QTRY_COMPARE(chat->messages().size(), std::size_t{1});
+    const Message& kMessage = chat->messages().front();
+    QCOMPARE(kMessage.isUser(), true);
+    QCOMPARE(kMessage.text(), QStringLiteral("caption"));
+    QVERIFY(kMessage.hasImage());
+    QVERIFY(hasImageWithMime(kMessage, QStringLiteral("image/png")));
+    QTRY_COMPARE(input->property("text").toString(), QString());
+}
+
+void TestQmlChat::test_pastedImageIsRenderedInTheTimeline() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    harness.clipboard().setImage(tinyImage());
+
+    QObject* input = harness.child(QStringLiteral("messageInput"));
+    QVERIFY(input != nullptr);
+    auto* inputItem = qobject_cast<QQuickItem*>(input);
+    QVERIFY(inputItem != nullptr);
+    inputItem->forceActiveFocus();
+    QCoreApplication::processEvents();
+
+    auto* window = qobject_cast<QQuickWindow*>(harness.root());
+    QVERIFY(window != nullptr);
+    pressPasteShortcut(*window);
+
+    QTRY_COMPARE(harness.chats().at(0)->messages().size(), std::size_t{1});
+    QVERIFY(previewIsDisplayable(waitForMessageImage(window)));
 }
 
 void TestQmlChat::test_streamingTailShowsTheLiveReply() {

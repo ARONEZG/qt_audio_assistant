@@ -25,6 +25,31 @@ QString systemPrompt(const std::vector<Message>& history) {
     return system;
 }
 
+// Adds one user turn. A text-only turn stays a plain string; a turn with an
+// image becomes a content-block turn (the optional caption as text plus the
+// image itself). LLMQore owns the wire format (an OpenAI `image_url` part with a
+// base64 data URL). QList is part of LLMQore's API and stays local to this
+// adapter call; it is neither stored nor returned by a project-owned contract.
+void addUserTurn(LLMQore::Conversation& conversation, const Message& message) {
+    if (!message.hasImage()) {
+        conversation.addUser(message.text());
+        return;
+    }
+    const std::optional<ImageAttachment>& image = message.image();
+    if (!image.has_value()) {
+        // Defensive: hasImage() and image() are the same optional, so this is
+        // unreachable, but it keeps the access checked.
+        conversation.addUser(message.text());
+        return;
+    }
+    QList<LLMQore::TurnContent> content;
+    if (!message.text().isEmpty()) {
+        content.append(LLMQore::TextContent{message.text()});
+    }
+    content.append(LLMQore::ImageContent::fromBytes(image->data(), image->mimeType()));
+    conversation.addUser(content);
+}
+
 // Builds the request payload from our history. System turns become the system
 // prompt; user and assistant turns keep their order. This is the only place our
 // Message becomes an LLMQore value, so the translation stays inside the adapter.
@@ -32,7 +57,7 @@ LLMQore::Conversation toConversation(const std::vector<Message>& history) {
     LLMQore::Conversation conversation;
     for (const Message& message : history) {
         if (message.role() == MessageRole::kUser) {
-            conversation.addUser(message.text());
+            addUserTurn(conversation, message);
         } else if (message.role() == MessageRole::kAssistant) {
             conversation.addAssistant(message.text());
         }

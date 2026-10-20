@@ -5,11 +5,13 @@
 #include <QtTest>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "FakeProvider.h"
 #include "domain/Chat.h"
+#include "domain/ImageAttachment.h"
 #include "domain/Message.h"
 #include "domain/ProviderError.h"
 #include "domain/SafeMarkdown.h"
@@ -72,6 +74,14 @@ private slots:
     void test_sequentialSendsPreserveHistory();
     void test_historyIsPassedToProvider();
     void test_emptyTextIsIgnored();
+    void test_sendImageAppendsUserMessageAndStartsStreaming();
+    void test_sendImageKeepsTheCaption();
+    void test_sendImageWithoutCaptionIsValid();
+    void test_sendImageWhileStreamingIsIgnored();
+    void test_sendImageWithEmptyDataIsIgnored();
+    void test_modelExposesImageRoles();
+    void test_imageSourceRoleIsEmptyForTextOnlyMessage();
+    void test_historyCarriesTheImage();
     void test_providerDestroyingAnswerResetsStreaming();
     void test_modelExposesMessageRoles();
     void test_modelInsertsUserMessageRow();
@@ -479,6 +489,120 @@ void TestChat::test_emptyTextIsIgnored() {
     QCOMPARE(chat.isStreaming(), false);
     QCOMPARE(chat.rowCount(), 0);
     QCOMPARE(fake->respondCount(), 0);
+}
+
+void TestChat::test_sendImageAppendsUserMessageAndStartsStreaming() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    const QSignalSpy kStateSpy(&chat, &Chat::stateChanged);
+
+    const bool kSent = chat.sendImage(ImageAttachment(QByteArray("png-bytes"), QStringLiteral("image/png")),
+                                      QStringLiteral("look"));
+
+    QCOMPARE(kSent, true);
+    QCOMPARE(chat.messages().size(), std::size_t{1});
+    QCOMPARE(chat.messages().at(0).role(), MessageRole::kUser);
+    QCOMPARE(chat.messages().at(0).text(), QStringLiteral("look"));
+    QVERIFY(chat.messages().at(0).hasImage());
+    const std::optional<ImageAttachment>& kImage = chat.messages().at(0).image();
+    if (!kImage.has_value()) {
+        QFAIL("the sent message must carry the attachment");
+    }
+    QCOMPARE(kImage->mimeType(), QStringLiteral("image/png"));
+    QCOMPARE(chat.isStreaming(), true);
+    QCOMPARE(kStateSpy.count(), 1);
+    QCOMPARE(fake->respondCount(), 1);
+}
+
+void TestChat::test_sendImageKeepsTheCaption() {
+    Chat chat(std::make_unique<FakeProvider>());
+
+    (void)chat.sendImage(ImageAttachment(QByteArray("bytes"), QStringLiteral("image/png")), QStringLiteral("caption"));
+
+    // The caption is ordinary user text: displayed verbatim and available to the
+    // provider alongside the image.
+    QCOMPARE(chat.data(chat.index(0), Chat::kTextRole).toString(), QStringLiteral("caption"));
+    QCOMPARE(chat.data(chat.index(0), Chat::kMarkupRole).toString(), QStringLiteral("caption"));
+}
+
+void TestChat::test_sendImageWithoutCaptionIsValid() {
+    Chat chat(std::make_unique<FakeProvider>());
+
+    const bool kSent = chat.sendImage(ImageAttachment(QByteArray("bytes"), QStringLiteral("image/png")));
+
+    // Unlike send(), an image message has content even with empty text.
+    QCOMPARE(kSent, true);
+    QCOMPARE(chat.messages().size(), std::size_t{1});
+    QCOMPARE(chat.messages().at(0).text(), QString());
+    QCOMPARE(chat.isStreaming(), true);
+}
+
+void TestChat::test_sendImageWhileStreamingIsIgnored() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+    chat.send(QStringLiteral("first"));
+
+    const bool kSent =
+            chat.sendImage(ImageAttachment(QByteArray("bytes"), QStringLiteral("image/png")), QStringLiteral("second"));
+
+    QCOMPARE(kSent, false);
+    QCOMPARE(chat.messages().size(), std::size_t{1});
+    QCOMPARE(chat.messages().at(0).text(), QStringLiteral("first"));
+    QCOMPARE(fake->respondCount(), 1);
+}
+
+void TestChat::test_sendImageWithEmptyDataIsIgnored() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+
+    const bool kSent =
+            chat.sendImage(ImageAttachment(QByteArray(), QStringLiteral("image/png")), QStringLiteral("cap"));
+
+    // An attachment with no bytes is not content: no row, no request.
+    QCOMPARE(kSent, false);
+    QCOMPARE(chat.messages().size(), std::size_t{0});
+    QCOMPARE(chat.isStreaming(), false);
+    QCOMPARE(fake->respondCount(), 0);
+}
+
+void TestChat::test_modelExposesImageRoles() {
+    Chat chat(std::make_unique<FakeProvider>());
+    (void)chat.sendImage(ImageAttachment(QByteArray("png-bytes"), QStringLiteral("image/png")));
+
+    QCOMPARE(chat.roleNames().value(Chat::kHasImageRole), QByteArrayLiteral("hasImage"));
+    QCOMPARE(chat.roleNames().value(Chat::kImageSourceRole), QByteArrayLiteral("imageSource"));
+    QCOMPARE(chat.data(chat.index(0), Chat::kHasImageRole).toBool(), true);
+    const QString kExpected =
+            QStringLiteral("data:image/png;base64,%1").arg(QString::fromLatin1(QByteArray("png-bytes").toBase64()));
+    QCOMPARE(chat.data(chat.index(0), Chat::kImageSourceRole).toString(), kExpected);
+}
+
+void TestChat::test_imageSourceRoleIsEmptyForTextOnlyMessage() {
+    Chat chat(std::make_unique<FakeProvider>());
+    chat.send(QStringLiteral("hi"));
+
+    QCOMPARE(chat.data(chat.index(0), Chat::kHasImageRole).toBool(), false);
+    QCOMPARE(chat.data(chat.index(0), Chat::kImageSourceRole).toString(), QString());
+}
+
+void TestChat::test_historyCarriesTheImage() {
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    Chat chat(std::move(provider));
+
+    (void)chat.sendImage(ImageAttachment(QByteArray("bytes"), QStringLiteral("image/jpeg")), QStringLiteral("look"));
+
+    QCOMPARE(fake->lastHistory().size(), std::size_t{1});
+    QVERIFY(fake->lastHistory().at(0).hasImage());
+    const std::optional<ImageAttachment>& kImage = fake->lastHistory().at(0).image();
+    if (!kImage.has_value()) {
+        QFAIL("the provider history must carry the attachment");
+    }
+    QCOMPARE(kImage->data(), QByteArray("bytes"));
+    QCOMPARE(kImage->mimeType(), QStringLiteral("image/jpeg"));
 }
 
 void TestChat::test_providerDestroyingAnswerResetsStreaming() {

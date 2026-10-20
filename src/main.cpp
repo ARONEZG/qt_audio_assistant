@@ -11,9 +11,11 @@
 #include <memory>
 #include <vector>
 
+#include "app/ClipboardImageEncoder.h"
 #include "app/OpenAiCompatibleProvider.h"
 #include "app/OpenAiCompatibleTranscriber.h"
 #include "app/PlaceholderProvider.h"
+#include "app/SystemClipboard.h"
 #include "audio/AudioBuffer.h"
 #include "audio/AudioFormat.h"
 #include "audio/MiniaudioCaptureSource.h"
@@ -27,6 +29,7 @@
 #include "domain/Chat.h"
 #include "domain/Chats.h"
 #include "domain/NewChat.h"
+#include "domain/PasteImage.h"
 #include "domain/ProviderConfigFile.h"
 #include "domain/ProviderConfigSource.h"
 #include "domain/ProviderOffer.h"
@@ -109,6 +112,17 @@ struct StartupConfig {
     };
 }
 
+// Opens the single chat the application starts with, using the first offered
+// provider. The settings dialog can switch the provider later (rebuilding this
+// chat) or change the endpoint/model/key, which the rebuild picks up because the
+// provider recipe reads the live settings. A provider list can be empty in a
+// misconfigured build; that is a supported no-chat state.
+void openInitialChat(NewChat& newChat, const Providers& providers) {
+    if (providers.count() > 0) {
+        (void)newChat.open(providers.idAt(0));
+    }
+}
+
 // The objects the QML module binds to, grouped so the loader takes one argument
 // instead of one per view model. Pointers rather than references: the guideline
 // forbids reference data members.
@@ -120,6 +134,15 @@ struct Composition {
     AudioCapture* audioCapture;
     CaptureSettings* captureSettings;
     VoiceInput* voiceInput;
+    PasteImage* pasteImage;
+};
+
+// The clipboard adapter and the paste command. Members are declared in
+// dependency order: the command borrows the adapter and is destroyed first.
+struct PasteStack {
+    SystemClipboard clipboard;
+    ClipboardImageEncoder encoder;
+    PasteImage command{clipboard, encoder};
 };
 
 // Loads the root QML component and hands the composition objects to it. False
@@ -133,6 +156,7 @@ struct Composition {
             {QStringLiteral("audioCapture"), QVariant::fromValue(composition.audioCapture)},
             {QStringLiteral("captureSettings"), QVariant::fromValue(composition.captureSettings)},
             {QStringLiteral("voiceInput"), QVariant::fromValue(composition.voiceInput)},
+            {QStringLiteral("pasteImage"), QVariant::fromValue(composition.pasteImage)},
     });
     engine.load(QUrl(QStringLiteral("qrc:/qt/qml/AudioAssistant/Main.qml")));
     return !engine.rootObjects().isEmpty();
@@ -156,6 +180,14 @@ void wireCaptureSwitch(Chat& chat, AudioCapture& audioCapture, audio::MiniaudioC
             qInfo() << "Audio capture started (16 kHz, mono, f32)";
         }
     });
+}
+
+// Wires the open chat's capture switch to the pipeline. Capture does not start at
+// launch: it runs only while the switch is on.
+void wireChatCaptureSwitch(Chats& chats, AudioCapture& capture, audio::MiniaudioCaptureSource& source) {
+    if (Chat* chat = chats.at(0); chat != nullptr) {
+        wireCaptureSwitch(*chat, capture, source);
+    }
 }
 
 // Keeps the transcriber's endpoint/key in sync with the live settings and logs
@@ -276,17 +308,13 @@ private:
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    // QGuiApplication must outlive the event loop; it is intentionally not
-    // const even though exec() is static (canonical Qt entry-point pattern).
+    // Must outlive the event loop; non-const is the canonical Qt entry-point pattern.
     QGuiApplication app(argc, argv);  // NOLINT(misc-const-correctness)
 
-    // RAII guard: the bridge lives for the whole event loop. Non-const by
-    // convention, mirroring std::lock_guard.
+    // RAII guard: the bridge lives for the whole event loop.
     audio_assistant::log::LogBridge logBridge;  // NOLINT(misc-const-correctness)
 
-    // Composition root. The live settings objects are the single source the
-    // provider recipe and the capture pipeline read; a saved change affects the
-    // next minted chat / transcription.
+    // Composition root: live settings shared by the provider recipe and the pipeline.
     const ProviderConfigFile kConfigFile(providerConfigPath());
     const CaptureConfigFile kCaptureConfigFile(captureConfigPath());
     const StartupConfig kStartup = resolveStartupConfig(kConfigFile, kCaptureConfigFile);
@@ -300,13 +328,7 @@ int main(int argc, char* argv[]) {
     Providers providers(providerOffers(settings));
     NewChat newChat(chats, providers);
 
-    // The application opens a single chat up front with the first offered
-    // provider. The settings dialog can switch the provider (rebuilding this
-    // chat) or change the endpoint/model/key, which the rebuild picks up because
-    // the provider recipe reads the live settings.
-    if (providers.count() > 0) {
-        (void)newChat.open(providers.idAt(0));
-    }
+    openInitialChat(newChat, providers);
 
     // The capture pipeline is owned here for the whole event loop: the buffer is
     // sized for the largest selectable window and transcribeLast() trims each
@@ -318,11 +340,8 @@ int main(int argc, char* argv[]) {
     wireTranscriberSettings(settings, pipeline.transcriber(), kStartup.capture.config.sttModel);
     wireCaptureSettings(captureSettings, pipeline.capture(), pipeline.transcriber());
 
-    // The chat's capture switch drives the pipeline. Capture does not start at
-    // launch: it runs only while the switch is on.
-    if (Chat* chat = chats.at(0); chat != nullptr) {
-        wireCaptureSwitch(*chat, pipeline.capture(), pipeline.source());
-    }
+    // The chat's capture switch drives the pipeline (capture is off at launch).
+    wireChatCaptureSwitch(chats, pipeline.capture(), pipeline.source());
 
     // The single path behind Ctrl+R and the Transcribe button: recognize the
     // last utterance and post it as a chat message. Declared after the pipeline
@@ -331,8 +350,20 @@ int main(int argc, char* argv[]) {
     // command is disabled because there is nowhere to post the text.
     VoiceInput voiceInput(pipeline.capture(), chats.at(0));
 
+    // The clipboard adapter and the paste command. The adapter reads the system
+    // clipboard; the command is the single path behind the composer's paste
+    // gesture. Declared before the engine (which exposes the command to QML), so
+    // it outlives every QML object that references it.
+    PasteStack pasteStack;
+
     QQmlApplicationEngine engine;
-    const Composition kComposition{
-            &chats, &providers, &newChat, &settings, &pipeline.capture(), &captureSettings, &voiceInput};
+    const Composition kComposition{&chats,
+                                   &providers,
+                                   &newChat,
+                                   &settings,
+                                   &pipeline.capture(),
+                                   &captureSettings,
+                                   &voiceInput,
+                                   &pasteStack.command};
     return loadMainQml(engine, kComposition) ? app.exec() : -1;
 }

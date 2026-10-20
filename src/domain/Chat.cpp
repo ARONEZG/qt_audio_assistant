@@ -68,6 +68,12 @@ QVariant Chat::data(const QModelIndex& index, int role) const {
     if (role == kMarkupRole) {
         return markupAt(static_cast<std::size_t>(index.row()));
     }
+    if (role == kHasImageRole) {
+        return message.hasImage();
+    }
+    if (role == kImageSourceRole) {
+        return imageSourceAt(static_cast<std::size_t>(index.row()));
+    }
     return {};
 }
 
@@ -79,6 +85,8 @@ QHash<int, QByteArray> Chat::roleNames() const {
     roles.insert(kTextRole, QByteArrayLiteral("text"));
     roles.insert(kIsUserRole, QByteArrayLiteral("isUser"));
     roles.insert(kMarkupRole, QByteArrayLiteral("markup"));
+    roles.insert(kHasImageRole, QByteArrayLiteral("hasImage"));
+    roles.insert(kImageSourceRole, QByteArrayLiteral("imageSource"));
     return roles;
 }
 
@@ -138,14 +146,32 @@ QString Chat::providerName() const {
 }
 
 void Chat::send(const QString& text) {
-    if (isStreaming_ || text.isEmpty()) {
+    // A blank text message is meaningless. An image message may have an empty
+    // caption, but it still carries content, so that guard lives in sendImage().
+    if (text.isEmpty()) {
         return;
     }
+    (void)beginUserRequest(Message(MessageRole::kUser, text));
+}
+
+bool Chat::sendImage(ImageAttachment image, const QString& caption) {
+    if (image.data().isEmpty()) {
+        return false;
+    }
+    return beginUserRequest(Message(MessageRole::kUser, caption, std::move(image)));
+}
+
+bool Chat::beginUserRequest(const Message& message) {
+    if (isStreaming_) {
+        return false;
+    }
     // A new request supersedes the failure of the previous one. An ignored send
-    // (streaming or blank text) is not a new request and leaves it untouched.
+    // (streaming or an empty payload) is not a new request and leaves it
+    // untouched.
     clearError();
-    appendMessage(Message(MessageRole::kUser, text));
+    appendMessage(message);
     startStreaming();
+    return true;
 }
 
 void Chat::cancel() {
@@ -169,6 +195,7 @@ void Chat::appendMessage(const Message& message) {
     // Keep the memoisation aligned with the history; the value is filled in on
     // the first kMarkupRole query.
     markupCache_.emplace_back(std::nullopt);
+    imageSourceCache_.emplace_back(std::nullopt);
     endInsertRows();
 }
 
@@ -187,6 +214,23 @@ QString Chat::markupAt(std::size_t row) const {
     const QString kMarkup = kMessage.isUser() ? kMessage.text() : SafeMarkdown(kMessage.text()).text();
     cached = kMarkup;
     return kMarkup;
+}
+
+QString Chat::imageSourceAt(std::size_t row) const {
+    std::optional<QString>& cached = imageSourceCache_[row];
+    if (cached.has_value()) {
+        return *cached;
+    }
+    const std::optional<ImageAttachment>& image = messages_[row].image();
+    if (!image.has_value()) {
+        cached = QString();
+        return *cached;
+    }
+    // A data URL is the simplest way to hand an in-memory image to QML Image:
+    // it needs no temporary file and no image-provider registration. The source
+    // is built once per row and reused by every layout pass.
+    cached = QStringLiteral("data:%1;base64,%2").arg(image->mimeType(), QString::fromLatin1(image->data().toBase64()));
+    return *cached;
 }
 
 void Chat::startStreaming() {

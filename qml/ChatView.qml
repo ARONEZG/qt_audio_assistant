@@ -15,6 +15,7 @@ Item {
     required property Chats chats
     required property AudioCapture audioCapture
     required property VoiceInput voiceInput
+    required property PasteImage pasteImage
 
     Accessible.name: qsTr("Chat")
 
@@ -28,6 +29,7 @@ Item {
             height: parent.height
             audioCapture: root.audioCapture
             voiceInput: root.voiceInput
+            pasteImage: root.pasteImage
         }
     }
 
