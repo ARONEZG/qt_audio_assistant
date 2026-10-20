@@ -57,11 +57,31 @@ Item {
             }
         }
 
-        // Keep the newest content visible: a new message, every growth of the
-        // streaming tail and every resize of the view (the tail is the last row,
-        // so it scrolls into view with the rest of the transcript).
+        // Whether the newest content is kept on screen. A view scrolls itself
+        // only while it shows the end; any user scroll (wheel, drag, flick)
+        // away from the end hands the view to the reader, and returning to the
+        // end resumes following. Without this guard the list fights the user:
+        // it jumps to the bottom on every streamed chunk and on every delegate
+        // it materialises while contentHeight is being refined.
+        property bool followTail: true
+
+        onContentYChanged: followTail = atYEnd
+
+        // A new message - and the answer it completes into - is always brought
+        // into view; the tail only grows while it is followed, so a user reading
+        // the history is not pulled down by every chunk.
         onCountChanged: positionViewAtEnd()
-        onContentHeightChanged: positionViewAtEnd()
-        onHeightChanged: positionViewAtEnd()
+
+        onContentHeightChanged: {
+            if (followTail) {
+                positionViewAtEnd();
+            }
+        }
+
+        onHeightChanged: {
+            if (followTail) {
+                positionViewAtEnd();
+            }
+        }
     }
 }
