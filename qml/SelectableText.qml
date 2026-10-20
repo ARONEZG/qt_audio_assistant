@@ -16,9 +16,12 @@ TextEdit {
 
     readOnly: true
     selectByMouse: true
+    // Shift+arrows select once the passage has focus, but the passage is not a
+    // Tab stop: a long transcript must not make Tab walk through every message.
+    // A click focuses it, after which Ctrl+C copies the selection.
     selectByKeyboard: true
+    activeFocusOnTab: false
     persistentSelection: true
-    cursorVisible: false
     wrapMode: TextEdit.Wrap
     textFormat: TextEdit.PlainText
     color: Theme.textPrimary
@@ -26,14 +29,41 @@ TextEdit {
     selectedTextColor: Theme.textPrimary
     font.pixelSize: Theme.fontSizeBody
 
-    Accessible.role: Accessible.StaticText
+    // A read-only TextEdit paints no caret. Keyboard selection is still usable:
+    // Shift+arrows highlight the passage, and Ctrl+C copies that highlight.
+    // The accessibility role is left at the TextEdit default (editable text,
+    // reported as read-only), because the passage is interactive now.
 
-    // TextEdit consumes mouse presses for its own selection; a pointer handler
-    // observes the right button without taking the left-button press away from
-    // it. The menu opens at the click position, relative to this item.
+    // Right-click opens the menu. Control+click is the one-button-mouse
+    // convention on macOS; accepting it everywhere costs nothing and keeps the
+    // gesture working whichever form the platform delivers it in.
     TapHandler {
         acceptedButtons: Qt.RightButton
-        onTapped: eventPoint => contextMenu.popup(eventPoint.position.x, eventPoint.position.y)
+        onPressedChanged: {
+            if (pressed && Application.styleHints.contextMenuTrigger === Qt.ContextMenuTrigger.Press) {
+                contextMenu.popup(point.position.x, point.position.y);
+            }
+        }
+        onTapped: eventPoint => {
+            if (Application.styleHints.contextMenuTrigger === Qt.ContextMenuTrigger.Release) {
+                contextMenu.popup(eventPoint.position.x, eventPoint.position.y);
+            }
+        }
+    }
+
+    TapHandler {
+        acceptedButtons: Qt.LeftButton
+        acceptedModifiers: Qt.ControlModifier
+        onPressedChanged: {
+            if (pressed && Application.styleHints.contextMenuTrigger === Qt.ContextMenuTrigger.Press) {
+                contextMenu.popup(point.position.x, point.position.y);
+            }
+        }
+        onTapped: eventPoint => {
+            if (Application.styleHints.contextMenuTrigger === Qt.ContextMenuTrigger.Release) {
+                contextMenu.popup(eventPoint.position.x, eventPoint.position.y);
+            }
+        }
     }
 
     Menu {
