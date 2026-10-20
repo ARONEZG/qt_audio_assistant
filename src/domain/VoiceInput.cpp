@@ -14,6 +14,11 @@ VoiceInput::VoiceInput(AudioCapture& capture, Chat* chat, QObject* parent)
     connect(&capture_, &AudioCapture::transcribed, this, &VoiceInput::onTranscribed);
     connect(&capture_, &AudioCapture::failed, this, &VoiceInput::onFailed);
     if (chat_ != nullptr) {
+        // The chat is borrowed, but it is observable: if the composition ever
+        // removes it, a later result must not reach a dangling pointer. Qt drops
+        // the signal connection automatically; clearing the pointer covers the
+        // asynchronous transcription that is still in flight.
+        connect(chat_, &QObject::destroyed, this, [this] { chat_ = nullptr; });
         connect(chat_, &Chat::stateChanged, this, &VoiceInput::onChatStateChanged);
     }
 }
@@ -26,18 +31,25 @@ bool VoiceInput::isBusy() const noexcept {
 
 void VoiceInput::transcribeAndSend() {
     if (busy_) {
-        qWarning() << "Voice input ignored: a transcription is already in flight";
+        qInfo() << "Voice input ignored: a transcription is already in flight";
         return;
     }
     if (chat_ == nullptr) {
-        qWarning() << "Voice input ignored: no chat is open";
+        qInfo() << "Voice input ignored: no chat is open";
+        return;
+    }
+    // Mirrors the view: with capture off the buffer holds no new utterance to
+    // recognize. Kept here too so a direct command call cannot spend a request
+    // on stale audio.
+    if (!chat_->isBackgroundCaptureEnabled()) {
+        qInfo() << "Voice input ignored: background audio capture is off";
         return;
     }
     // Chat::send() ignores a message while a reply streams. Refusing the request
     // up front is honest: no recognition is spent, and the user still sees the
     // in-flight reply instead of a silently dropped message.
     if (chat_->isStreaming()) {
-        qWarning() << "Voice input ignored: wait for the current reply to finish";
+        qInfo() << "Voice input ignored: wait for the current reply to finish";
         return;
     }
     setBusy(true);
@@ -69,13 +81,21 @@ void VoiceInput::onChatStateChanged() {
     if (chat_->isStreaming() || pendingText_.isEmpty()) {
         return;
     }
+    // Any transition to idle re-delivers, including a cancelled reply: the
+    // spoken message is independent of the reply the user abandoned.
     deliver(std::exchange(pendingText_, QString()));
 }
 
 void VoiceInput::deliver(const QString& text) {
     const QString kText = text.trimmed();
     if (kText.isEmpty()) {
-        qWarning() << "Voice input: the transcription was empty; nothing sent";
+        qInfo() << "Voice input: the transcription was empty; nothing sent";
+        return;
+    }
+    if (chat_ == nullptr) {
+        // The chat was destroyed while recognition was running; there is nowhere
+        // to post the late transcript.
+        qInfo() << "Voice input: no chat is open; the transcription was dropped";
         return;
     }
     if (chat_->isStreaming()) {

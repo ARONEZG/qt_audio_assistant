@@ -37,8 +37,17 @@ public:
         auto provider = std::make_unique<FakeProvider>();
         provider_ = provider.get();
         chat_ = std::make_unique<Chat>(std::move(provider));
+        // The command's precondition: there is a fresh utterance to recognize.
+        // Tests that exercise the disabled state switch it off explicitly.
+        chat_->setBackgroundCaptureEnabled(true);
         capture_ = std::make_unique<AudioCapture>(buffer_, source_, transcriber_);
         voice_ = std::make_unique<VoiceInput>(*capture_, chat_.get());
+    }
+
+    // Simulates the composition removing the open chat while recognition is
+    // still running; voice() must observe QObject::destroyed and stay safe.
+    void destroyChat() {
+        chat_.reset();
     }
 
     [[nodiscard]] FakeProvider& provider() noexcept {
@@ -82,8 +91,11 @@ private slots:
     void test_emptyTranscriptionIsNotSent();
     void test_failedTranscriptionIsNotSent();
     void test_secondRequestWhileBusyIsIgnored();
+    void test_requestWhileCaptureIsOffIsIgnored();
     void test_requestWhileChatStreamingIsIgnored();
     void test_transcriptIsSentAfterTheStreamingReply();
+    void test_transcriptIsSentAfterTheReplyIsCancelled();
+    void test_lateTranscriptAfterChatDestructionIsDropped();
     void test_externalTranscriptionIsNotSent();
     void test_externalFailureIsIgnored();
     void test_nullChatDoesNotSend();
@@ -179,6 +191,19 @@ void TestVoiceInput::test_secondRequestWhileBusyIsIgnored() {
     QCOMPARE(fixture.chat().messages().at(1).text(), QStringLiteral("second"));
 }
 
+void TestVoiceInput::test_requestWhileCaptureIsOffIsIgnored() {
+    Fixture fixture;
+    fixture.chat().setBackgroundCaptureEnabled(false);
+
+    fixture.voice().transcribeAndSend();
+
+    // The view disables the shortcut/button, and the command enforces the same
+    // precondition for direct callers: no fresh capture, no request.
+    QCOMPARE(fixture.transcriber().callCount(), 0);
+    QCOMPARE(fixture.voice().isBusy(), false);
+    QCOMPARE(fixture.chat().messages().size(), std::size_t{0});
+}
+
 void TestVoiceInput::test_requestWhileChatStreamingIsIgnored() {
     Fixture fixture;
     fixture.chat().send(QStringLiteral("typed"));
@@ -216,6 +241,36 @@ void TestVoiceInput::test_transcriptIsSentAfterTheStreamingReply() {
     QCOMPARE(fixture.chat().messages().at(2).text(), QStringLiteral("spoken"));
     QCOMPARE(fixture.chat().messages().at(2).isUser(), true);
     QCOMPARE(fixture.provider().respondCount(), 2);
+}
+
+// A cancelled reply is still a transition to idle: the queued transcript is an
+// independent message and is delivered after the user abandons the answer.
+void TestVoiceInput::test_transcriptIsSentAfterTheReplyIsCancelled() {
+    Fixture fixture;
+    fixture.voice().transcribeAndSend();
+    fixture.chat().send(QStringLiteral("typed"));
+    fixture.transcriber().succeedWith(QStringLiteral("spoken"));
+    QTRY_COMPARE(fixture.voice().isBusy(), false);
+    QCOMPARE(fixture.chat().messages().size(), std::size_t{1});
+
+    fixture.chat().cancel();
+
+    QCOMPARE(fixture.chat().messages().size(), std::size_t{2});
+    QCOMPARE(fixture.chat().messages().at(1).text(), QStringLiteral("spoken"));
+    QCOMPARE(fixture.chat().messages().at(1).isUser(), true);
+    QCOMPARE(fixture.provider().respondCount(), 2);
+}
+
+// If the open chat is removed while recognition is in flight, the late result
+// is dropped without touching a dangling pointer.
+void TestVoiceInput::test_lateTranscriptAfterChatDestructionIsDropped() {
+    Fixture fixture;
+    fixture.voice().transcribeAndSend();
+    fixture.destroyChat();
+    fixture.transcriber().succeedWith(QStringLiteral("late"));
+
+    // The queued terminal signal still reaches the command; it only clears busy.
+    QTRY_COMPARE(fixture.voice().isBusy(), false);
 }
 
 // Only results of a request the command itself started are auto-sent: a
