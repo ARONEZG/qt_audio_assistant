@@ -58,7 +58,7 @@ void AudioCapture::transcribeLast() {
     } else {
         const double kSeconds =
                 static_cast<double>(snapshot.size()) / static_cast<double>(source_.format().sampleRate());
-        qInfo() << "Transcribing" << snapshot.size() << "samples (" << kSeconds << "s)" << "snapshotMs=" << kSnapshotMs;
+        qInfo() << "Transcribing" << snapshot.size() << "samples (" << kSeconds << "s)";
     }
 
     // When a VAD gate is attached, send only the last detected utterance
@@ -66,24 +66,25 @@ void AudioCapture::transcribeLast() {
     // buffer holds (freshly, from the snapshot), so its intervals map 1:1 onto
     // the snapshot.
     if (vadGate_ != nullptr && !snapshot.empty()) {
-        if (!selectLastUtterance(*vadGate_, snapshot)) {
+        if (!selectLastUtterance(*vadGate_, snapshot, kSnapshotMs)) {
             return;
         }
     } else {
-        qInfo() << "Transcription timing: snapshotMs=" << kSnapshotMs << "vadMs=0 (no VAD gate)";
+        qInfo() << "Transcription timing: snapshotMs=" << kSnapshotMs << "vadMs=0";
     }
 
     transcriber_.transcribe(std::move(snapshot));
 }
 
-bool AudioCapture::selectLastUtterance(audio::VadSpeechGate& gate, std::vector<float>& snapshot) {
+bool AudioCapture::selectLastUtterance(audio::VadSpeechGate& gate, std::vector<float>& snapshot, qint64 snapshotMs) {
     const std::size_t kCapturedSamples = snapshot.size();
     QElapsedTimer stageTimer;
     stageTimer.start();
     snapshot = gate.lastSpeechBlock(std::span<const float>(snapshot));
     const qint64 kVadMs = stageTimer.elapsed();
-    qInfo() << "Transcription timing: vadMs=" << kVadMs << "kept" << snapshot.size() << "of" << kCapturedSamples
-            << "samples";
+    const std::size_t kSpeechSamples = gate.lastSpeechSamples();
+    qInfo() << "Transcription timing: snapshotMs=" << snapshotMs << "vadMs=" << kVadMs << "kept" << snapshot.size()
+            << "of" << kCapturedSamples << "samples (speech" << kSpeechSamples << ")";
 
     // No speech means there is nothing to recognise. Report it locally instead
     // of sending an empty block to the network: the user gets an honest reason
@@ -94,17 +95,14 @@ bool AudioCapture::selectLastUtterance(audio::VadSpeechGate& gate, std::vector<f
         return false;
     }
 
-    // Guard: if the speech fragment after VAD trimming is shorter than the
-    // minimum meaningful duration, report a user-friendly error instead of
-    // sending a too-short fragment to the STT endpoint (which would likely
-    // hallucinate English text on short/noisy clips). The threshold lives here
-    // in AudioCapture because it is the orchestration seam that decides whether
-    // to call the transcriber at all — the VAD gate only trims silence, it does
-    // not make policy decisions about minimum transcriptable duration.
-    // 0.75 s at 16 kHz = 12000 samples.
+    // Guard: apply the minimum to the detected speech, not to the padded block.
+    // The pre/post-roll is 500 ms of silence, so measuring the padded size would
+    // lower the effective speech threshold to ~250 ms and let short noise
+    // bursts through - exactly the hallucination case this guard prevents.
+    // 0.75 s at 16 kHz = 12000 samples of actual speech.
     constexpr std::size_t kMinSpeechSamples = 12000;
-    if (snapshot.size() < kMinSpeechSamples) {
-        qWarning() << "Speech fragment too short (" << snapshot.size() << " samples, < " << kMinSpeechSamples
+    if (kSpeechSamples < kMinSpeechSamples) {
+        qWarning() << "Speech fragment too short (" << kSpeechSamples << " speech samples, < " << kMinSpeechSamples
                    << "): skipping transcription";
         onFailed(ProviderError::kInvalidResponse,
                  QStringLiteral("Speech fragment too short — too brief to transcribe reliably"));

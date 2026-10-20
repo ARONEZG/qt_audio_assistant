@@ -77,8 +77,7 @@ std::size_t VadSpeechGate::consumedSamples() const noexcept {
 }
 
 std::vector<float> VadSpeechGate::trimSilence(std::span<const float> samples) {
-    reset();
-    feedSamples(samples);
+    analyze(samples);
     const std::vector<bool> kKeep = keepMask(samples.size());
     std::vector<float> trimmed;
     trimmed.reserve(samples.size());
@@ -91,8 +90,7 @@ std::vector<float> VadSpeechGate::trimSilence(std::span<const float> samples) {
 }
 
 std::vector<float> VadSpeechGate::lastSpeechBlock(std::span<const float> samples) {
-    reset();
-    feedSamples(samples);
+    analyze(samples);
     if (intervals_.empty()) {
         return {};
     }
@@ -109,6 +107,15 @@ std::vector<float> VadSpeechGate::lastSpeechBlock(std::span<const float> samples
         return {};
     }
     return {samples.begin() + static_cast<std::ptrdiff_t>(kStart), samples.begin() + static_cast<std::ptrdiff_t>(kEnd)};
+}
+
+std::size_t VadSpeechGate::lastSpeechSamples() const noexcept {
+    return intervals_.empty() ? 0 : intervals_.back().frameCount() * kVadFrameSize;
+}
+
+void VadSpeechGate::analyze(std::span<const float> samples) {
+    reset();
+    feedSamples(samples);
 }
 
 void VadSpeechGate::reset() {

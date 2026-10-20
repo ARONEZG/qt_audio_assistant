@@ -67,6 +67,7 @@ private slots:
     void test_lastSpeechBlockClipsPostRollAtBlockEnd();
     void test_lastSpeechBlockWithNoSpeechReturnsEmpty();
     void test_lastSpeechBlockWithEmptyInputReturnsEmpty();
+    void test_lastSpeechBlockPreRollDoesNotReachThePreviousIntervalAtProductionParams();
     void test_resetClearsStateAndResetsDetector();
     void test_consumedSamplesCountsAllFeededSamples();
 };
@@ -239,6 +240,39 @@ void TestVadGate::test_lastSpeechBlockWithEmptyInputReturnsEmpty() {
 
     QVERIFY(kBlock.empty());
     QCOMPARE(detector.processCount(), 0);
+}
+
+// Pins the production coupling: with minSilenceFrames = 16 (512 ms) the 300 ms
+// pre-roll is shorter than the gap, so selecting the last interval cannot reach
+// back into the previous utterance. The boundary frame values make an overlap
+// visible even if the size assertion changes.
+void TestVadGate::test_lastSpeechBlockPreRollDoesNotReachThePreviousIntervalAtProductionParams() {
+    FakeVoiceActivityDetector detector;
+    audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 8, 16});
+    constexpr std::size_t kFrameCount = 45;
+
+    std::vector<std::size_t> speechFrames;
+    for (std::size_t frame = 0; frame < 8; ++frame) {
+        speechFrames.push_back(frame);
+    }
+    for (std::size_t frame = 24; frame < 32; ++frame) {
+        speechFrames.push_back(frame);
+    }
+    detector.setSequence(sequenceWithSpeech(kFrameCount, speechFrames));
+
+    const std::vector<float> kSamples = frameValues(kFrameCount);
+    const std::vector<float> kBlock = gate.lastSpeechBlock(kSamples);
+
+    QCOMPARE(gate.intervals().size(), std::size_t{2});
+    QCOMPARE(gate.intervals().back().start(), std::size_t{24});
+    QCOMPARE(gate.lastSpeechSamples(), 8 * kFrameSize);
+    // Last interval starts at 24*512 = 12288; the pre-roll reaches 7488, which
+    // is inside the 16-frame silence (frames 8..23), not the first utterance.
+    constexpr std::size_t kExpectedStart = 24 * kFrameSize - 4800;
+    constexpr std::size_t kExpectedEnd = 32 * kFrameSize + 3200;
+    QCOMPARE(kBlock.size(), kExpectedEnd - kExpectedStart);
+    QCOMPARE(kBlock.front(), 14.0F);
+    QCOMPARE(kBlock.back(), kSamples[kExpectedEnd - 1]);
 }
 
 void TestVadGate::test_resetClearsStateAndResetsDetector() {

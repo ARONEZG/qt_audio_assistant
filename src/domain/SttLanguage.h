@@ -12,7 +12,7 @@
 //   POLZA_STT_LANGUAGE="en"        -> "en"
 //
 //   POLZA_STT_PROMPT absent/empty  -> "" (no prompt field is sent)
-//   POLZA_STT_PROMPT="..."         -> "..." verbatim (vocabulary/spelling hint)
+//   POLZA_STT_PROMPT="..."         -> trimmed value (vocabulary/spelling hint)
 //
 // The environment is injected (not read from the process here) so the mapping is
 // unit-testable without mutating the real environment, exactly like

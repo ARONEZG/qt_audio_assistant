@@ -13,6 +13,8 @@ QString sttLanguageFromEnvironment(const QProcessEnvironment& environment) {
 
 QString sttPromptFromEnvironment(const QProcessEnvironment& environment) {
     // Absent and explicitly empty both mean "send no prompt": unlike language,
-    // there is no useful default vocabulary hint.
-    return environment.value(QStringLiteral("POLZA_STT_PROMPT"));
+    // there is no useful default vocabulary hint. Whitespace-only values are
+    // treated as empty so a stray `POLZA_STT_PROMPT=" "` does not reach the
+    // request.
+    return environment.value(QStringLiteral("POLZA_STT_PROMPT")).trimmed();
 }

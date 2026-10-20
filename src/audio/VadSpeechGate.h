@@ -75,10 +75,8 @@ public:
     // speech intervals, and returns only the samples inside those intervals
     // (concatenated in chronological order). An empty result means the block
     // contained no speech (or every detected run was shorter than minSpeech).
-    // Kept for compatibility: two phrases separated by a pause longer than
-    // minSilenceFrames arrive back-to-back ([phrase1][phrase2]) with no
-    // separator, which makes the request as long as the whole capture window.
-    // The capture pipeline uses lastSpeechBlock() instead.
+    // Retained as the audio library's public one-shot API (compatibility); the
+    // capture pipeline uses lastSpeechBlock() instead.
     [[nodiscard]] std::vector<float> trimSilence(std::span<const float> samples);
 
     // Convenience one-shot for the capture pipeline: runs the same VAD pass as
@@ -87,7 +85,18 @@ public:
     // The padding preserves word onsets/endings that a frame-aligned cut would
     // clip; it is clipped to the block boundaries. An empty result means no
     // speech was detected, so the caller must not send a request.
+    //
+    // Invariant: the pre-roll must stay shorter than the segmenter's
+    // minSilenceFrames * 512, otherwise it can reach into the previous
+    // interval. The production parameters (minSilenceFrames = 16, 512 ms) hold
+    // this for the 300 ms pre-roll; tst_vadgate pins the combination.
     [[nodiscard]] std::vector<float> lastSpeechBlock(std::span<const float> samples);
+
+    // The number of samples in the last detected speech interval, before the
+    // pre/post-roll was added. Valid after lastSpeechBlock(); zero when no
+    // speech was found. Callers use it to apply a minimum-speech policy without
+    // counting padding as speech.
+    [[nodiscard]] std::size_t lastSpeechSamples() const noexcept;
 
     // The number of PCM samples consumed by feedSamples() so far, including the
     // partial frame currently held. Used to align the mask with the stream.
@@ -97,6 +106,11 @@ public:
     void reset();
 
 private:
+    // One-shot pass shared by trimSilence()/lastSpeechBlock(): clears the
+    // previous stream and feeds the whole block through the detector, leaving
+    // intervals_ and probabilities_ ready for a query.
+    void analyze(std::span<const float> samples);
+
     VoiceActivityDetector& detector_;
     SpeechSegmenter segmenter_;
     std::vector<SpeechInterval> intervals_;

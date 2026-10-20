@@ -89,13 +89,15 @@ public:
     Q_INVOKABLE void start();
     Q_INVOKABLE void stop();
 
-    // Sends a snapshot of the buffer to the transcriber. The terminal result
-    // arrives later through transcribed()/failed() (the TranscriptionProvider
-    // contract: transcribe() never emits synchronously). Without a VAD gate an
-    // empty buffer is sent as an empty block; with a gate, no detected speech
-    // (or a fragment below the minimum duration) is reported locally through
-    // failed() and no network request is made. Starts a new request, so a
-    // previous failure is cleared.
+    // Sends a snapshot of the buffer to the transcriber. The transcriber's
+    // terminal result arrives later through transcribed()/failed() (the
+    // TranscriptionProvider contract: its transcribe() never emits
+    // synchronously). Local rejections - no VAD speech or a fragment below the
+    // minimum duration - are different: they never reach the network and are
+    // emitted synchronously from this command through failed(), so the caller
+    // sees the reason immediately. Without a VAD gate an empty buffer is sent
+    // as an empty block. Starts a new request, so a previous failure is
+    // cleared.
     Q_INVOKABLE void transcribeLast();
 
     // The stream format of the injected source; a pure query.
@@ -116,11 +118,11 @@ private:
     void clearError();
 
     // Replaces `snapshot` with the last detected utterance plus its pre/post
-    // roll and enforces the minimum transcribable duration. Returns false after
-    // reporting a local failure (no speech / too short) when the caller must not
-    // call the transcriber. The gate must have been attached and the snapshot
-    // must be non-empty.
-    [[nodiscard]] bool selectLastUtterance(audio::VadSpeechGate& gate, std::vector<float>& snapshot);
+    // roll and enforces the minimum transcribable speech duration (padding is
+    // not counted as speech). Returns false after reporting a local failure
+    // (no speech / too short) when the caller must not call the transcriber.
+    // The gate must have been attached and the snapshot must be non-empty.
+    [[nodiscard]] bool selectLastUtterance(audio::VadSpeechGate& gate, std::vector<float>& snapshot, qint64 snapshotMs);
 
     audio::AudioBuffer& buffer_;
     audio::AudioSource& source_;

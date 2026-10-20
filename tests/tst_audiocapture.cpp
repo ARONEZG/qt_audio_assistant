@@ -50,8 +50,8 @@ std::vector<float> frameValues(std::size_t frameCount) {
 constexpr auto kBufferDuration = std::chrono::milliseconds{100};
 
 // The VAD tests need the full synthetic window to survive the ring buffer, so
-// they use a generously large duration (1 s = 16000 samples) instead.
-constexpr auto kVadBufferDuration = std::chrono::seconds{1};
+// they use a generously large duration (2 s = 32000 samples) instead.
+constexpr auto kVadBufferDuration = std::chrono::seconds{2};
 
 }  // namespace
 
@@ -249,13 +249,14 @@ void TestAudioCapture::test_vadGateSendsOnlyTheLastSpeechBlock() {
     audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 2, 2});
     capture.setVadGate(gate);
 
-    // 27 frames (13824 samples). Two utterances: frames 0..1 and 12..23, with a
-    // long pause between them. Only the second one (plus padding) may be sent.
-    constexpr std::size_t kFrameCount = 27;
+    // 45 frames (23040 samples, inside the 2 s buffer). Two utterances: frames
+    // 0..1 and 14..37 (the latter is 12288 speech samples, above the 12000
+    // minimum). Only the second one (plus padding) may be sent.
+    constexpr std::size_t kFrameCount = 45;
     std::vector<float> probabilities(kFrameCount, 0.05F);
     probabilities[0] = 0.9F;
     probabilities[1] = 0.9F;
-    for (std::size_t frame = 12; frame < 24; ++frame) {
+    for (std::size_t frame = 14; frame < 38; ++frame) {
         probabilities[frame] = 0.9F;
     }
     detector.setSequence(std::move(probabilities));
@@ -264,14 +265,14 @@ void TestAudioCapture::test_vadGateSendsOnlyTheLastSpeechBlock() {
     capture.transcribeLast();
 
     QTRY_COMPARE(transcriber.callCount(), 1);
-    // Last interval [12*512, 24*512) = [6144, 12288). Pre-roll 4800 samples
-    // reaches 1344 (past the first utterance), post-roll 3200 is clipped at the
-    // block end 13824.
-    constexpr std::size_t kExpectedStart = 12 * kFrameSize - 4800;
-    constexpr std::size_t kExpectedSize = kFrameCount * kFrameSize - kExpectedStart;
-    QCOMPARE(transcriber.lastSamples().size(), kExpectedSize);
-    QCOMPARE(transcriber.lastSamples().front(), 2.0F);
-    QCOMPARE(transcriber.lastSamples().back(), 26.0F);
+    // Last interval [14*512, 38*512) = [7168, 19456). Pre-roll 4800 reaches
+    // 2368 (past the first utterance), post-roll 3200 ends at 22656 inside the
+    // block, so the sent block is 20288 samples rather than the whole 23040.
+    constexpr std::size_t kExpectedStart = 14 * kFrameSize - 4800;
+    constexpr std::size_t kExpectedEnd = 38 * kFrameSize + 3200;
+    QCOMPARE(transcriber.lastSamples().size(), kExpectedEnd - kExpectedStart);
+    QCOMPARE(transcriber.lastSamples().front(), 4.0F);
+    QCOMPARE(transcriber.lastSamples().back(), 44.0F);
 }
 
 // When the VAD-trimmed speech fragment is shorter than the minimum meaningful
@@ -287,7 +288,9 @@ void TestAudioCapture::test_vadGateShortFragmentFailsWithoutTranscriber() {
     capture.setVadGate(gate);
 
     // 6 frames: silence, speech, speech, silence...
-    // VAD keeps frames 1..2 = 1024 samples (well below the 12000 guard).
+    // The detected speech is frames 1..2 = 1024 samples; the padded block would
+    // only reach 3072 samples, so the guard must judge the speech itself, not
+    // the padding, and reject it as too short.
     detector.setSequence({0.05F, 0.9F, 0.9F, 0.05F, 0.05F, 0.05F});
     buffer.write(std::vector<float>(6 * std::size_t{512}, 0.5F));
 

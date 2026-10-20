@@ -24,6 +24,7 @@ private slots:
     void test_configuredValueIsReturnedVerbatim();
     void test_absentPromptIsEmpty();
     void test_emptyPromptIsEmpty();
+    void test_whitespaceOnlyPromptIsEmpty();
     void test_configuredPromptIsReturnedVerbatim();
 };
 
@@ -59,6 +60,13 @@ void TestSttLanguage::test_absentPromptIsEmpty() {
 void TestSttLanguage::test_emptyPromptIsEmpty() {
     QProcessEnvironment environment;
     environment.insert(QStringLiteral("POLZA_STT_PROMPT"), QString());
+
+    QCOMPARE(sttPromptFromEnvironment(environment), QString());
+}
+
+void TestSttLanguage::test_whitespaceOnlyPromptIsEmpty() {
+    QProcessEnvironment environment;
+    environment.insert(QStringLiteral("POLZA_STT_PROMPT"), QStringLiteral("   "));
 
     QCOMPARE(sttPromptFromEnvironment(environment), QString());
 }
