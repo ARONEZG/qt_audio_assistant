@@ -421,6 +421,7 @@ add_library(audio-assistant-domain STATIC
     src/domain/SafeMarkdown.cpp
     src/domain/SttLanguage.cpp
     src/domain/TranscriptionProvider.cpp
+    src/domain/VoiceInput.cpp
 )
 
 set_target_properties(audio-assistant-domain PROPERTIES
@@ -982,6 +983,40 @@ target_link_libraries(tst_audiocapture PRIVATE
 
 add_test(NAME tst_audiocapture COMMAND tst_audiocapture)
 set_tests_properties(tst_audiocapture PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+# ── Voice-input command test ────────────────────────────────
+# Covers the seam that turns a transcription into a chat message: the command
+# starts the facade, posts a non-empty transcript, rejects empty/failed results,
+# ignores repeated or busy-chat requests and queues a transcript that arrives
+# while a reply is still streaming. Both the capture pipeline and the chat run
+# against deterministic doubles.
+qt_add_executable(tst_voiceinput
+    tests/tst_voiceinput.cpp
+    tests/FakeAudioSource.cpp
+    tests/FakeAudioSource.h
+    tests/FakeProvider.cpp
+    tests/FakeProvider.h
+    tests/FakeTranscriber.cpp
+    tests/FakeTranscriber.h
+)
+
+set_target_properties(tst_voiceinput PROPERTIES
+    CXX_EXTENSIONS OFF
+)
+
+target_link_libraries(tst_voiceinput PRIVATE
+    audio-assistant-strict
+    audio-assistant-qt-warnings
+    audio-assistant-audio
+    audio-assistant-domain
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME tst_voiceinput COMMAND tst_voiceinput)
+set_tests_properties(tst_voiceinput PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 

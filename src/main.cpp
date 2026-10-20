@@ -32,6 +32,7 @@
 #include "domain/ProviderOffer.h"
 #include "domain/ProviderSettings.h"
 #include "domain/Providers.h"
+#include "domain/VoiceInput.h"
 #include "logging/LogBridge.hpp"
 
 namespace {
@@ -118,6 +119,7 @@ struct Composition {
     ProviderSettings* settings;
     AudioCapture* audioCapture;
     CaptureSettings* captureSettings;
+    VoiceInput* voiceInput;
 };
 
 // Loads the root QML component and hands the composition objects to it. False
@@ -130,6 +132,7 @@ struct Composition {
             {QStringLiteral("providerSettings"), QVariant::fromValue(composition.settings)},
             {QStringLiteral("audioCapture"), QVariant::fromValue(composition.audioCapture)},
             {QStringLiteral("captureSettings"), QVariant::fromValue(composition.captureSettings)},
+            {QStringLiteral("voiceInput"), QVariant::fromValue(composition.voiceInput)},
     });
     engine.load(QUrl(QStringLiteral("qrc:/qt/qml/AudioAssistant/Main.qml")));
     return !engine.rootObjects().isEmpty();
@@ -321,7 +324,15 @@ int main(int argc, char* argv[]) {
         wireCaptureSwitch(*chat, pipeline.capture(), pipeline.source());
     }
 
+    // The single path behind Ctrl+R and the Transcribe button: recognize the
+    // last utterance and post it as a chat message. Declared after the pipeline
+    // and before the engine, so it outlives every QML object that references it.
+    // A null chat (no provider offered) is a supported no-chat state: the
+    // command is disabled because there is nowhere to post the text.
+    VoiceInput voiceInput(pipeline.capture(), chats.at(0));
+
     QQmlApplicationEngine engine;
-    const Composition kComposition{&chats, &providers, &newChat, &settings, &pipeline.capture(), &captureSettings};
+    const Composition kComposition{
+            &chats, &providers, &newChat, &settings, &pipeline.capture(), &captureSettings, &voiceInput};
     return loadMainQml(engine, kComposition) ? app.exec() : -1;
 }
