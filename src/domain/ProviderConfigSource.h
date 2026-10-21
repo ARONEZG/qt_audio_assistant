@@ -14,9 +14,8 @@
 // This is what lets an operator run the binary with POLZA_BASE_URL=… without
 // touching the user's saved configuration.
 //
-// The API key is read *only* from the environment here. A key that ends up in
-// the configuration file is ignored by ProviderConfigFile and can therefore
-// never reach this result.
+// The API key is resolved like the other values: the file provides the default,
+// and a non-empty POLZA_API_KEY environment variable overrides it for the run.
 class ProviderConfigSource {
 public:
     // Plain result aggregate: its public members are the whole contract.

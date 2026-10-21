@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QObject>
+#include <QProcessEnvironment>
 #include <QSignalSpy>
 #include <QString>
 #include <QTcpSocket>
@@ -19,6 +20,7 @@
 #include "domain/Chats.h"
 #include "domain/Message.h"
 #include "domain/NewChat.h"
+#include "domain/ProviderConfigSource.h"
 #include "domain/ProviderOffer.h"
 #include "domain/ProviderSettings.h"
 #include "domain/Providers.h"
@@ -87,9 +89,10 @@ public:
 private slots:
     void test_exposesInitialValues();
     void test_saveReplacesTheConfigurationAsAWhole();
-    void test_savePersistsUrlAndModelButNotTheKey();
+    void test_savePersistsUrlModelAndKey();
     void test_saveSucceedsWithoutAnApiKey();
     void test_emptyApiKeyKeepsTheExistingSessionKey();
+    void test_savingWithABlankFieldPersistsTheEnvironmentKey();
     void test_saveRejectsInvalidInput_data();
     void test_saveRejectsInvalidInput();
     void test_clearErrorClearsTheSaveError();
@@ -146,7 +149,7 @@ void TestProviderSettings::test_saveReplacesTheConfigurationAsAWhole() {
     QCOMPARE(kSavedSpy.count(), 2);
 }
 
-void TestProviderSettings::test_savePersistsUrlAndModelButNotTheKey() {
+void TestProviderSettings::test_savePersistsUrlModelAndKey() {
     const QTemporaryDir kDirectory;
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
@@ -159,17 +162,16 @@ void TestProviderSettings::test_savePersistsUrlAndModelButNotTheKey() {
     const QString kText = readText(kFile.path());
     QVERIFY(kText.contains(QStringLiteral("POLZA_BASE_URL=https://saved.test/v1")));
     QVERIFY(kText.contains(QStringLiteral("POLZA_MODEL=saved-model")));
-    QVERIFY(!kText.contains(QStringLiteral("super-secret")));
-    QVERIFY(!kText.contains(QStringLiteral("POLZA_API_KEY")));
-    // The key is still available in memory for the session.
+    QVERIFY(kText.contains(QStringLiteral("POLZA_API_KEY=super-secret")));
+    // The key is also available in memory for the running session.
     QCOMPARE(settings.apiKey(), QStringLiteral("super-secret"));
     QVERIFY(settings.isKeyConfigured());
 }
 
 void TestProviderSettings::test_saveSucceedsWithoutAnApiKey() {
-    // Persisting the endpoint/model must not depend on a secret that is never
-    // persisted: the key is a separate session concern, and the provider reports
-    // a missing key honestly when a chat is actually sent.
+    // Saving the endpoint/model must not depend on a key: an empty key field
+    // means "no key yet", and the provider reports a missing key honestly when
+    // a chat is actually sent.
     const QTemporaryDir kDirectory;
     QVERIFY(kDirectory.isValid());
     const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
@@ -183,15 +185,17 @@ void TestProviderSettings::test_saveSucceedsWithoutAnApiKey() {
     const QString kText = readText(kFile.path());
     QVERIFY(kText.contains(QStringLiteral("POLZA_BASE_URL=https://no-key.test/v1")));
     QVERIFY(kText.contains(QStringLiteral("POLZA_MODEL=no-key-model")));
-    QVERIFY(!kText.contains(QStringLiteral("POLZA_API_KEY")));
+    // No key was provided, so the persisted key value is empty.
+    QVERIFY(kText.contains(QStringLiteral("POLZA_API_KEY=\n")));
 }
 
 void TestProviderSettings::test_emptyApiKeyKeepsTheExistingSessionKey() {
     // The form never displays a stored key, so an empty key field means "keep
-    // the key from the environment / previous session" rather than "erase it".
+    // the key from the environment / previous save" rather than "erase it".
     const QTemporaryDir kDirectory;
     QVERIFY(kDirectory.isValid());
-    ProviderSettings settings({}, {}, ProviderConfigFile(kDirectory.filePath(QStringLiteral("provider.env"))));
+    const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
+    ProviderSettings settings({}, {}, kFile);
     QVERIFY(settings.save(
             QStringLiteral("https://one.test/v1"), QStringLiteral("model-one"), QStringLiteral("env-key")));
 
@@ -201,6 +205,30 @@ void TestProviderSettings::test_emptyApiKeyKeepsTheExistingSessionKey() {
     QVERIFY(settings.isKeyConfigured());
     QCOMPARE(settings.baseUrl(), QStringLiteral("https://two.test/v1"));
     QCOMPARE(settings.model(), QStringLiteral("model-two"));
+    // The kept key is persisted again, not erased by the empty field.
+    QVERIFY(readText(kFile.path()).contains(QStringLiteral("POLZA_API_KEY=env-key")));
+}
+
+void TestProviderSettings::test_savingWithABlankFieldPersistsTheEnvironmentKey() {
+    // The settings object receives the startup resolution, where POLZA_API_KEY
+    // may come from the environment. Saving the endpoint/model with an empty key
+    // field keeps that key and writes it to provider.env, so an environment-only
+    // secret becomes a persisted one. This is the documented behaviour.
+    const QTemporaryDir kDirectory;
+    QVERIFY(kDirectory.isValid());
+    const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
+
+    QProcessEnvironment environment;
+    environment.insert(QStringLiteral("POLZA_API_KEY"), QStringLiteral("env-only-key"));
+    const ProviderConfigSource::Result kResolved = ProviderConfigSource(kFile, environment).resolve();
+    QVERIFY(kResolved.ok());
+    QCOMPARE(kResolved.apiKey, QStringLiteral("env-only-key"));
+
+    ProviderSettings settings(kResolved.config, kResolved.apiKey, kFile);
+    QVERIFY(settings.save(QStringLiteral("https://saved.test/v1"), QStringLiteral("saved-model"), QString()));
+
+    QCOMPARE(settings.apiKey(), QStringLiteral("env-only-key"));
+    QVERIFY(readText(kFile.path()).contains(QStringLiteral("POLZA_API_KEY=env-only-key")));
 }
 
 void TestProviderSettings::test_saveRejectsInvalidInput_data() {
@@ -309,7 +337,7 @@ void TestProviderSettings::test_eachChatIsMintedFromTheLatestSavedSettings() {
 
     // A new chat is minted after the settings changed, so it must use the new
     // model - the recipe reads the settings at fresh() time, not at startup. The
-    // empty key means the session key is kept.
+    // empty key means the current key is kept.
     QVERIFY(settings.save(server.baseUrl(), QStringLiteral("model-two"), QString()));
     Chat* second = newChat.open(QStringLiteral("openai-compatible"));
     QVERIFY(second != nullptr);

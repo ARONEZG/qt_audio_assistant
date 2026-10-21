@@ -1181,15 +1181,14 @@ void TestQmlChat::test_saveButtonPersistsProviderSettings() {
     QCOMPARE(harness.settings().model(), QStringLiteral("panel-model"));
     QCOMPARE(harness.settings().apiKey(), QStringLiteral("panel-secret"));
     QVERIFY(harness.settings().isKeyConfigured());
-    // The key field is cleared after a successful save: the secret lives only in
-    // the C++ session, not in the view.
+    // The key field is cleared after a successful save: the view never renders
+    // the stored secret back.
     QCOMPARE(apiKeyField->property("text").toString(), QString());
 
     const QString kText = readTextFile(harness.configFile().path());
     QVERIFY(kText.contains(QStringLiteral("POLZA_BASE_URL=https://panel.test/v1")));
     QVERIFY(kText.contains(QStringLiteral("POLZA_MODEL=panel-model")));
-    QVERIFY(!kText.contains(QStringLiteral("panel-secret")));
-    QVERIFY(!kText.contains(QStringLiteral("POLZA_API_KEY")));
+    QVERIFY(kText.contains(QStringLiteral("POLZA_API_KEY=panel-secret")));
 }
 
 void TestQmlChat::test_saveButtonAppliesWithoutLosingHistory() {

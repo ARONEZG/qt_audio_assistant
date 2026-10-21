@@ -23,7 +23,7 @@ ProviderConfigSource::ProviderConfigSource(ProviderConfigFile file, const QProce
 ProviderConfigSource::Result ProviderConfigSource::resolve() const {
     const ProviderConfigFile::LoadResult kLoaded = file_.load();
 
-    Result result{kLoaded.config, valueOrEmpty(environment_, kApiKeyVariable), kLoaded.error};
+    Result result{kLoaded.config, kLoaded.apiKey, kLoaded.error};
 
     const QString kEnvironmentUrl = valueOrEmpty(environment_, kBaseUrlVariable);
     if (!kEnvironmentUrl.isEmpty()) {
@@ -32,6 +32,10 @@ ProviderConfigSource::Result ProviderConfigSource::resolve() const {
     const QString kEnvironmentModel = valueOrEmpty(environment_, kModelVariable);
     if (!kEnvironmentModel.isEmpty()) {
         result.config.model = kEnvironmentModel;
+    }
+    const QString kEnvironmentKey = valueOrEmpty(environment_, kApiKeyVariable);
+    if (!kEnvironmentKey.isEmpty()) {
+        result.apiKey = kEnvironmentKey;
     }
     return result;
 }

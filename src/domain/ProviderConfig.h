@@ -3,9 +3,10 @@
 #include <QString>
 
 // The persisted part of an OpenAI-compatible provider configuration: the
-// endpoint and the model. The API key is deliberately not a member - it is a
-// session secret that is read from the environment or entered by the user and
-// is never written to disk.
+// endpoint and the model. The API key is deliberately not a member of this
+// value: it is a secret that is threaded separately (see ProviderConfigFile and
+// ProviderConfigSource) and is still persisted on disk, just not mixed into this
+// freely-copied aggregate.
 //
 // An empty value is a valid "not configured yet" state for an object that is
 // being edited, so validation is an explicit query rather than a constructor
