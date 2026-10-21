@@ -12,10 +12,15 @@
 // in tests) and the class itself never reaches for a hardcoded location.
 //
 // The API key is persisted as POLZA_API_KEY alongside POLZA_BASE_URL and
-// POLZA_MODEL. It is stored in plain text in this user-readable file, so the
-// file's permissions should be kept restricted. Unknown keys are ignored on
-// read, which keeps the file compatible with a regular .env the user may also
-// use with the environment variables.
+// POLZA_MODEL. It is stored in plain text, so the file is written with
+// owner-only permissions (0600) and a directory created for it with 0700.
+// Unknown keys are ignored on read, which keeps the file compatible with a
+// regular .env the user may also use with the environment variables.
+//
+// Values are read and written in the usual line-based .env way: surrounding
+// whitespace (spaces, tabs, a trailing carriage return) is not part of the
+// value. The API key is normalised the same way, and a key containing an
+// internal line break is rejected instead of being written.
 class ProviderConfigFile {
 public:
     // Plain result aggregates: their public members are the whole contract.
@@ -52,7 +57,8 @@ public:
     // Writes the configuration, creating the parent directory when needed. The
     // values are validated (see ProviderConfig::validationError and the API key
     // single-line check) before the file is touched, so a rejected save leaves
-    // the previous file intact.
+    // the previous file intact. The file is committed with owner-only
+    // permissions, and a directory created by this call is owner-only too.
     [[nodiscard]] SaveResult save(const ProviderConfig& config, const QString& apiKey) const;
 
     [[nodiscard]] const QString& path() const noexcept;

@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QObject>
+#include <QProcessEnvironment>
 #include <QSignalSpy>
 #include <QString>
 #include <QTcpSocket>
@@ -19,6 +20,7 @@
 #include "domain/Chats.h"
 #include "domain/Message.h"
 #include "domain/NewChat.h"
+#include "domain/ProviderConfigSource.h"
 #include "domain/ProviderOffer.h"
 #include "domain/ProviderSettings.h"
 #include "domain/Providers.h"
@@ -90,6 +92,7 @@ private slots:
     void test_savePersistsUrlModelAndKey();
     void test_saveSucceedsWithoutAnApiKey();
     void test_emptyApiKeyKeepsTheExistingSessionKey();
+    void test_savingWithABlankFieldPersistsTheEnvironmentKey();
     void test_saveRejectsInvalidInput_data();
     void test_saveRejectsInvalidInput();
     void test_clearErrorClearsTheSaveError();
@@ -204,6 +207,28 @@ void TestProviderSettings::test_emptyApiKeyKeepsTheExistingSessionKey() {
     QCOMPARE(settings.model(), QStringLiteral("model-two"));
     // The kept key is persisted again, not erased by the empty field.
     QVERIFY(readText(kFile.path()).contains(QStringLiteral("POLZA_API_KEY=env-key")));
+}
+
+void TestProviderSettings::test_savingWithABlankFieldPersistsTheEnvironmentKey() {
+    // The settings object receives the startup resolution, where POLZA_API_KEY
+    // may come from the environment. Saving the endpoint/model with an empty key
+    // field keeps that key and writes it to provider.env, so an environment-only
+    // secret becomes a persisted one. This is the documented behaviour.
+    const QTemporaryDir kDirectory;
+    QVERIFY(kDirectory.isValid());
+    const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
+
+    QProcessEnvironment environment;
+    environment.insert(QStringLiteral("POLZA_API_KEY"), QStringLiteral("env-only-key"));
+    const ProviderConfigSource::Result kResolved = ProviderConfigSource(kFile, environment).resolve();
+    QVERIFY(kResolved.ok());
+    QCOMPARE(kResolved.apiKey, QStringLiteral("env-only-key"));
+
+    ProviderSettings settings(kResolved.config, kResolved.apiKey, kFile);
+    QVERIFY(settings.save(QStringLiteral("https://saved.test/v1"), QStringLiteral("saved-model"), QString()));
+
+    QCOMPARE(settings.apiKey(), QStringLiteral("env-only-key"));
+    QVERIFY(readText(kFile.path()).contains(QStringLiteral("POLZA_API_KEY=env-only-key")));
 }
 
 void TestProviderSettings::test_saveRejectsInvalidInput_data() {

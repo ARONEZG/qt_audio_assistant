@@ -11,14 +11,19 @@
 namespace {
 
 // The three keys this build owns. The API key is persisted as plain text, so the
-// file's permissions should be kept restricted.
+// file is written with owner-only permissions.
 constexpr auto kBaseUrlKey = QLatin1StringView("POLZA_BASE_URL");
 constexpr auto kModelKey = QLatin1StringView("POLZA_MODEL");
 constexpr auto kApiKeyKey = QLatin1StringView("POLZA_API_KEY");
 constexpr auto kFileHeader = QLatin1StringView(
         "# Audio Assistant provider configuration (KEY=VALUE).\n"
-        "# Endpoint, model and API key. The API key is stored in plain text\n"
-        "# in this user-readable file; keep its permissions restricted.\n");
+        "# Endpoint, model and API key. The API key is stored in plain text in\n"
+        "# this file, which is created with owner-only permissions (0600).\n");
+
+// The API key is a secret, so neither the file nor a directory created for it is
+// readable by other local users. 0600 for the file, 0700 for the directory.
+constexpr auto kOwnerFilePermissions = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+constexpr auto kOwnerDirectoryPermissions = QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
 
 [[nodiscard]] QString readError(const QString& path, const QString& reason) {
     return QStringLiteral("Cannot read provider configuration '%1': %2").arg(path, reason);
@@ -26,6 +31,43 @@ constexpr auto kFileHeader = QLatin1StringView(
 
 [[nodiscard]] QString writeError(const QString& path, const QString& reason) {
     return QStringLiteral("Cannot write provider configuration '%1': %2").arg(path, reason);
+}
+
+// Creates the parent directory when needed and makes it owner-only. An existing
+// directory is left untouched: its owner may reasonably manage its permissions.
+[[nodiscard]] QString prepareConfigDirectory(const QString& path) {
+    const QDir kDirectory = QFileInfo(path).absoluteDir();
+    if (kDirectory.exists()) {
+        return {};
+    }
+    if (!kDirectory.mkpath(QStringLiteral("."))) {
+        return writeError(path, QStringLiteral("cannot create the configuration directory"));
+    }
+    if (!QFile::setPermissions(kDirectory.absolutePath(), kOwnerDirectoryPermissions)) {
+        return writeError(path, QStringLiteral("cannot restrict the configuration directory permissions"));
+    }
+    return {};
+}
+
+// Writes the content through QSaveFile and restricts the committed file to its
+// owner. The temporary file receives the permissions before the rename, so the
+// destination is never world-readable, even for a moment.
+[[nodiscard]] QString writeConfigFile(const QString& path, const QString& content) {
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return writeError(path, file.errorString());
+    }
+    if (!file.setPermissions(kOwnerFilePermissions)) {
+        return writeError(path, QStringLiteral("cannot restrict the configuration file permissions"));
+    }
+    const QByteArray kBytes = content.toUtf8();
+    if (file.write(kBytes) != kBytes.size()) {
+        return writeError(path, file.errorString());
+    }
+    if (!file.commit()) {
+        return writeError(path, file.errorString());
+    }
+    return {};
 }
 
 // Parses one non-comment line. kMalformed means the line has no KEY=VALUE
@@ -115,6 +157,8 @@ ProviderConfigFile::SaveResult ProviderConfigFile::save(const ProviderConfig& co
     if (!kValidation.isEmpty()) {
         return {kValidation};
     }
+    // Surrounding whitespace is not part of a key in the line-based env format;
+    // it is normalised here and on read. Internal line breaks are rejected.
     const QString kKey = apiKey.trimmed();
     if (kKey.contains(QLatin1Char('\n')) || kKey.contains(QLatin1Char('\r'))) {
         return {QStringLiteral("API key must be a single line.")};
@@ -123,9 +167,9 @@ ProviderConfigFile::SaveResult ProviderConfigFile::save(const ProviderConfig& co
         return {QStringLiteral("Provider configuration path is empty.")};
     }
 
-    const QDir kDirectory = QFileInfo(path_).absoluteDir();
-    if (!kDirectory.exists() && !kDirectory.mkpath(QStringLiteral("."))) {
-        return {writeError(path_, QStringLiteral("cannot create the configuration directory"))};
+    const QString kDirectoryError = prepareConfigDirectory(path_);
+    if (!kDirectoryError.isEmpty()) {
+        return {kDirectoryError};
     }
 
     const QString kContent = QString::fromLatin1(kFileHeader) + QString::fromLatin1(kBaseUrlKey) + QLatin1Char('=') +
@@ -133,18 +177,7 @@ ProviderConfigFile::SaveResult ProviderConfigFile::save(const ProviderConfig& co
                              QLatin1Char('=') + config.model.trimmed() + QLatin1Char('\n') +
                              QString::fromLatin1(kApiKeyKey) + QLatin1Char('=') + kKey + QLatin1Char('\n');
 
-    QSaveFile file(path_);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        return {writeError(path_, file.errorString())};
-    }
-    const QByteArray kBytes = kContent.toUtf8();
-    if (file.write(kBytes) != kBytes.size()) {
-        return {writeError(path_, file.errorString())};
-    }
-    if (!file.commit()) {
-        return {writeError(path_, file.errorString())};
-    }
-    return {};
+    return {writeConfigFile(path_, kContent)};
 }
 
 const QString& ProviderConfigFile::path() const noexcept {

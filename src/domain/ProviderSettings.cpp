@@ -38,7 +38,8 @@ bool ProviderSettings::save(const QString& baseUrl, const QString& model, const 
 
     // A blank key field means "keep the current key" (from the environment or a
     // previous save); a typed key replaces it. The effective key is what gets
-    // persisted, so an empty field never erases an already-saved key.
+    // persisted, so an empty field never erases an already-saved key — and a key
+    // that came from POLZA_API_KEY is copied into provider.env on any save.
     const QString kTypedKey = apiKey.trimmed();
     const QString kEffectiveKey = kTypedKey.isEmpty() ? apiKey_ : kTypedKey;
 

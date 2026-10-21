@@ -1,6 +1,7 @@
 #include <QByteArray>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcessEnvironment>
 #include <QString>
 #include <QTemporaryDir>
@@ -46,7 +47,9 @@ private slots:
     void test_missingFileIsAnEmptyConfiguration();
     void test_roundTripPersistsBaseUrlModelAndApiKey();
     void test_savedFileIsEnvCompatibleAndPersistsTheApiKey();
+    void test_savedFileIsOwnerOnly();
     void test_saveCreatesTheMissingParentDirectory();
+    void test_saveRestrictsTheCreatedDirectory();
     void test_loadSkipsCommentsAndUnknownKeys();
     void test_loadRejectsMalformedLine();
     void test_saveRejectsInvalidConfig_data();
@@ -109,6 +112,34 @@ void TestProviderConfig::test_savedFileIsEnvCompatibleAndPersistsTheApiKey() {
     QVERIFY(kText.contains(QStringLiteral("POLZA_API_KEY=secret-key")));
 }
 
+void TestProviderConfig::test_savedFileIsOwnerOnly() {
+    const QTemporaryDir kDirectory;
+    QVERIFY(kDirectory.isValid());
+    const ProviderConfigFile kFile(kDirectory.filePath(QStringLiteral("provider.env")));
+
+    QVERIFY(kFile.save({QStringLiteral("https://example.test/v1"), QStringLiteral("model-x")},
+                       QStringLiteral("secret-key"))
+                    .ok());
+
+#if defined(Q_OS_UNIX)
+    // The API key is stored in plain text, so no other local user may read it.
+    // QFileInfo maps the owner bits to both the Owner and User flags, hence the
+    // checks below instead of an exact flag comparison.
+    const QFileDevice::Permissions kPermissions = QFileInfo(kFile.path()).permissions();
+    QVERIFY(kPermissions.testFlag(QFileDevice::ReadOwner));
+    QVERIFY(kPermissions.testFlag(QFileDevice::WriteOwner));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::ExeOwner));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::ReadGroup));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::WriteGroup));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::ExeGroup));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::ReadOther));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::WriteOther));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::ExeOther));
+#else
+    QVERIFY(QFileInfo(kFile.path()).isReadable());
+#endif
+}
+
 void TestProviderConfig::test_saveCreatesTheMissingParentDirectory() {
     const QTemporaryDir kDirectory;
     QVERIFY(kDirectory.isValid());
@@ -118,6 +149,31 @@ void TestProviderConfig::test_saveCreatesTheMissingParentDirectory() {
     QVERIFY(kFile.save({QStringLiteral("https://example.test/v1"), QStringLiteral("model-x")}, QString()).ok());
 
     QVERIFY(QFile::exists(kPath));
+}
+
+void TestProviderConfig::test_saveRestrictsTheCreatedDirectory() {
+    const QTemporaryDir kDirectory;
+    QVERIFY(kDirectory.isValid());
+    const QString kPath = QDir(kDirectory.path()).filePath(QStringLiteral("nested/config/provider.env"));
+    const ProviderConfigFile kFile(kPath);
+
+    QVERIFY(kFile.save({QStringLiteral("https://example.test/v1"), QStringLiteral("model-x")}, QString()).ok());
+
+#if defined(Q_OS_UNIX)
+    // A directory created to hold the secret is owner-only (0700).
+    const QFileDevice::Permissions kPermissions = QFileInfo(QFileInfo(kPath).absolutePath()).permissions();
+    QVERIFY(kPermissions.testFlag(QFileDevice::ReadOwner));
+    QVERIFY(kPermissions.testFlag(QFileDevice::WriteOwner));
+    QVERIFY(kPermissions.testFlag(QFileDevice::ExeOwner));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::ReadGroup));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::WriteGroup));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::ExeGroup));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::ReadOther));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::WriteOther));
+    QVERIFY(!kPermissions.testFlag(QFileDevice::ExeOther));
+#else
+    QVERIFY(QFileInfo(QFileInfo(kPath).absolutePath()).isDir());
+#endif
 }
 
 void TestProviderConfig::test_loadSkipsCommentsAndUnknownKeys() {
