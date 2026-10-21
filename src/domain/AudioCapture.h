@@ -79,9 +79,10 @@ public:
     // Attaches the voice-activity gate that selects the last utterance before
     // transcribing. The gate is optional: without it the whole capture window is
     // sent. When present and enabled through setCaptureOptions(), transcribeLast()
-    // sends only the last detected speech interval, extended by a short
-    // pre-roll/post-roll so word boundaries are not clipped, instead of the whole
-    // capture window. The gate is borrowed and must outlive this object.
+    // sends only the last detected utterance (the final cluster of speech
+    // intervals with pauses up to 1.5 s), extended by a short pre-roll/post-roll
+    // so word boundaries are not clipped, instead of the whole capture window.
+    // The gate is borrowed and must outlive this object.
     void setVadGate(audio::VadSpeechGate& gate);
 
     // Replaces the capture window and the local VAD gating options used by the

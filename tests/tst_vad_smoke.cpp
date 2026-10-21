@@ -20,6 +20,7 @@
 // report a high probability on the burst frames and a low one on the silence
 // frames around it.
 #include <QtTest>
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <numbers>
@@ -36,6 +37,13 @@ namespace {
 constexpr std::size_t kSampleRate = 16000;
 constexpr std::size_t kFrameSize = 512;
 constexpr std::size_t kNumberOfFrames = 16;
+
+// A full production capture window: 20 s at the canonical rate. Production
+// feeds every snapshot through one stateful detector pass, so the longest
+// stream the detector sees is this many frames (625), not the 16 of the smoke
+// stimulus below.
+constexpr std::size_t kCaptureWindowSeconds = 20;
+constexpr std::size_t kCaptureWindowFrames = kCaptureWindowSeconds * kSampleRate / kFrameSize;
 
 // A speech-*like* stimulus. Silero VAD is trained to reject tonal noise: a pure
 // sine (or DTMF/beep) is classified as non-speech, so the synthetic burst must
@@ -92,6 +100,7 @@ private slots:
     void test_modelLoadsFromResource();
     void test_toneBurstRaisesSpeechProbability();
     void test_silenceStaysBelowSpeechThreshold();
+    void test_burstIsDetectedAtEveryPositionInAFullCaptureWindow();
     void test_missingModelResourceThrows();
 };
 
@@ -135,6 +144,39 @@ void TestVadSmoke::test_silenceStaysBelowSpeechThreshold() {
         QVERIFY2(kProbability < 0.5F,
                  qPrintable(
                          QStringLiteral("expected silence below 0.5, got %1").arg(static_cast<double>(kProbability))));
+    }
+}
+
+// Regression for the capture path: production feeds a whole 20 s snapshot
+// (625 frames) through one stateful Silero pass, and only the last detected
+// interval is transcribed. If the model state/context drifted over a long
+// stream, speech late in the window would stop producing intervals and the
+// selected block would be truncated. The same deterministic burst is placed at
+// the start, the middle and the very end of the window: every position must
+// yield the same detection, with a fresh detector per position.
+void TestVadSmoke::test_burstIsDetectedAtEveryPositionInAFullCaptureWindow() {
+    const std::vector<float> kBurst = makeSpeechLikeBurst();
+    const std::vector<std::size_t> kOffsets{0, kCaptureWindowFrames / 2, kCaptureWindowFrames - kNumberOfFrames};
+
+    for (const std::size_t kOffset : kOffsets) {
+        audio::SileroVoiceActivityDetector detector;
+        std::vector<float> window(kCaptureWindowFrames * kFrameSize, 0.0F);
+        std::copy(kBurst.begin(), kBurst.end(), window.begin() + static_cast<std::ptrdiff_t>(kOffset * kFrameSize));
+
+        const std::vector<float> kProbabilities = runDetector(detector, window);
+
+        QCOMPARE(kProbabilities.size(), kCaptureWindowFrames);
+        std::size_t above = 0;
+        for (std::size_t frame = kOffset; frame < kOffset + kNumberOfFrames; ++frame) {
+            if (kProbabilities[frame] >= 0.5F) {
+                ++above;
+            }
+        }
+        QVERIFY2(above >= 10,
+                 qPrintable(QStringLiteral("burst at frame %1: expected most frames above 0.5, got %2/%3")
+                                    .arg(kOffset)
+                                    .arg(above)
+                                    .arg(kNumberOfFrames)));
     }
 }
 

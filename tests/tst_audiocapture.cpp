@@ -243,9 +243,13 @@ void TestAudioCapture::test_cancelledFailureLeavesNoError() {
 
 // With a VAD gate attached, only the last detected utterance reaches the
 // transcriber, extended by a 300 ms pre-roll and a 200 ms post-roll so word
-// onsets and endings are not clipped.
+// onsets and endings are not clipped. Earlier, genuinely old speech is dropped;
+// an intra-phrase pause short enough to be the same utterance is kept (covered
+// by tst_vadgate).
 void TestAudioCapture::test_vadGateSendsOnlyTheLastSpeechBlock() {
-    audio::AudioBuffer buffer(kVadBufferDuration, canonicalFormat());
+    // 3 s buffer: 90 frames (46080 samples) leave room for a gap wider than the
+    // 1.5 s utterance merge window between the two utterances.
+    audio::AudioBuffer buffer(std::chrono::seconds{3}, canonicalFormat());
     FakeAudioSource source;
     FakeTranscriber transcriber;
     AudioCapture capture(buffer, source, transcriber);
@@ -253,14 +257,15 @@ void TestAudioCapture::test_vadGateSendsOnlyTheLastSpeechBlock() {
     audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 2, 2});
     capture.setVadGate(gate);
 
-    // 45 frames (23040 samples, inside the 2 s buffer). Two utterances: frames
-    // 0..1 and 14..37 (the latter is 12288 speech samples, above the 12000
-    // minimum). Only the second one (plus padding) may be sent.
-    constexpr std::size_t kFrameCount = 45;
+    // Two utterances: frames 0..1 (an old remark) and 56..79 (24 frames =
+    // 12288 speech samples, above the 12000 minimum). The 54-frame gap
+    // (1.728 s) exceeds the utterance merge window, so only the second one
+    // (plus padding) may be sent.
+    constexpr std::size_t kFrameCount = 90;
     std::vector<float> probabilities(kFrameCount, 0.05F);
     probabilities[0] = 0.9F;
     probabilities[1] = 0.9F;
-    for (std::size_t frame = 14; frame < 38; ++frame) {
+    for (std::size_t frame = 56; frame < 80; ++frame) {
         probabilities[frame] = 0.9F;
     }
     detector.setSequence(std::move(probabilities));
@@ -269,14 +274,14 @@ void TestAudioCapture::test_vadGateSendsOnlyTheLastSpeechBlock() {
     capture.transcribeLast();
 
     QTRY_COMPARE(transcriber.callCount(), 1);
-    // Last interval [14*512, 38*512) = [7168, 19456). Pre-roll 4800 reaches
-    // 2368 (past the first utterance), post-roll 3200 ends at 22656 inside the
-    // block, so the sent block is 20288 samples rather than the whole 23040.
-    constexpr std::size_t kExpectedStart = 14 * kFrameSize - 4800;
-    constexpr std::size_t kExpectedEnd = 38 * kFrameSize + 3200;
+    // Last interval [56*512, 80*512) = [28672, 40960). Pre-roll 4800 reaches
+    // 23872 (the silence after the first utterance), post-roll 3200 ends at
+    // 44160, so the sent block is 20288 samples rather than the whole 46080.
+    constexpr std::size_t kExpectedStart = 56 * kFrameSize - 4800;
+    constexpr std::size_t kExpectedEnd = 80 * kFrameSize + 3200;
     QCOMPARE(transcriber.lastSamples().size(), kExpectedEnd - kExpectedStart);
-    QCOMPARE(transcriber.lastSamples().front(), 4.0F);
-    QCOMPARE(transcriber.lastSamples().back(), 44.0F);
+    QCOMPARE(transcriber.lastSamples().front(), 46.0F);
+    QCOMPARE(transcriber.lastSamples().back(), 86.0F);
 }
 
 // When the VAD-trimmed speech fragment is shorter than the minimum meaningful

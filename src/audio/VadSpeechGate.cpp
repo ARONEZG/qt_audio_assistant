@@ -21,6 +21,17 @@ inline constexpr std::size_t kVadFrameSize = 512;
 inline constexpr std::size_t kPreRollSamples = 4800;   // 300 ms at 16 kHz
 inline constexpr std::size_t kPostRollSamples = 3200;  // 200 ms at 16 kHz
 
+// Maximum silence between two speech intervals that still belongs to one
+// utterance. The segmenter hangover (minSilenceFrames * 32 ms, 512 ms in
+// production) already bridges short pauses, but a natural pause inside a
+// question can be longer and then produces two intervals; sending only the
+// final one truncated the phrase to its tail. Walking back over intervals
+// closer than this window rebuilds the whole phrase while keeping older,
+// unrelated speech out of the request: 1.5 s is longer than a breath/comma
+// pause but much shorter than the pauses between separate questions, and it
+// bounds the added audio to a few seconds instead of the 20 s capture window.
+inline constexpr std::size_t kUtteranceMergeGapSamples = 24000;  // 1.5 s at 16 kHz
+
 }  // namespace
 
 VadSpeechGate::VadSpeechGate(VoiceActivityDetector& detector, const SpeechSegmenter::Parameters& parameters)
@@ -95,12 +106,13 @@ std::vector<float> VadSpeechGate::lastSpeechBlock(std::span<const float> samples
         return {};
     }
 
-    // Only the final interval is the current utterance; earlier intervals are
-    // older phrases in the capture window and would make the STT request (and
-    // its latency) grow with the whole 30 s window.
-    const SpeechInterval& kLast = intervals_.back();
-    const std::size_t kSpeechStart = kLast.start() * kVadFrameSize;
-    const std::size_t kSpeechEnd = kLast.end() * kVadFrameSize;
+    // The current utterance is the final cluster of intervals: the last
+    // interval plus every preceding interval whose gap is short enough to be a
+    // pause inside the same phrase. Earlier, unrelated speech stays out, so
+    // the request does not grow with the whole capture window.
+    const std::size_t kFirstInterval = lastUtteranceFirstInterval();
+    const std::size_t kSpeechStart = intervals_[kFirstInterval].start() * kVadFrameSize;
+    const std::size_t kSpeechEnd = intervals_.back().end() * kVadFrameSize;
     const std::size_t kStart = kSpeechStart > kPreRollSamples ? kSpeechStart - kPreRollSamples : 0;
     const std::size_t kEnd = std::min(samples.size(), kSpeechEnd + kPostRollSamples);
     if (kStart >= kEnd) {
@@ -109,8 +121,31 @@ std::vector<float> VadSpeechGate::lastSpeechBlock(std::span<const float> samples
     return {samples.begin() + static_cast<std::ptrdiff_t>(kStart), samples.begin() + static_cast<std::ptrdiff_t>(kEnd)};
 }
 
+std::size_t VadSpeechGate::lastUtteranceFirstInterval() const noexcept {
+    std::size_t first = intervals_.size() - 1;
+    while (first > 0) {
+        const SpeechInterval& kPrevious = intervals_[first - 1];
+        const std::size_t kGapSamples = (intervals_[first].start() - kPrevious.end()) * kVadFrameSize;
+        if (kGapSamples > kUtteranceMergeGapSamples) {
+            break;
+        }
+        --first;
+    }
+    return first;
+}
+
 std::size_t VadSpeechGate::lastSpeechSamples() const noexcept {
-    return intervals_.empty() ? 0 : intervals_.back().frameCount() * kVadFrameSize;
+    if (intervals_.empty()) {
+        return 0;
+    }
+    // Count only the speech frames of the selected utterance cluster: the
+    // pauses between its intervals and the pre/post-roll are not speech, so the
+    // caller's minimum-duration guard stays honest.
+    std::size_t speechSamples = 0;
+    for (std::size_t i = lastUtteranceFirstInterval(); i < intervals_.size(); ++i) {
+        speechSamples += intervals_[i].frameCount() * kVadFrameSize;
+    }
+    return speechSamples;
 }
 
 void VadSpeechGate::analyze(std::span<const float> samples) {

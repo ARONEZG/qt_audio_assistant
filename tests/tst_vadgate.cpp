@@ -63,6 +63,7 @@ private slots:
     void test_trimSilenceKeepsOnlySpeech();
     void test_trimSilenceWithNoSpeechReturnsEmpty();
     void test_lastSpeechBlockSelectsTheLastInterval();
+    void test_lastSpeechBlockMergesAPauseInsideAnUtterance();
     void test_lastSpeechBlockClipsPreRollAtBlockStart();
     void test_lastSpeechBlockClipsPostRollAtBlockEnd();
     void test_lastSpeechBlockWithNoSpeechReturnsEmpty();
@@ -160,29 +161,62 @@ void TestVadGate::test_trimSilenceWithNoSpeechReturnsEmpty() {
 }
 
 // The whole point of lastSpeechBlock: only the final utterance is sent, not the
-// concatenation of every speech interval in the capture window.
+// concatenation of every speech interval in the capture window. A genuinely
+// old interval (a gap far beyond the merge window) must not be dragged in.
 void TestVadGate::test_lastSpeechBlockSelectsTheLastInterval() {
     FakeVoiceActivityDetector detector;
     audio::VadSpeechGate gate(detector, defaultParameters());
-    // Two separated utterances: frames 0..1 and frames 12..14. A pause of ten
-    // silent frames is longer than minSilenceFrames, so they are distinct.
-    constexpr std::size_t kFrameCount = 20;
-    detector.setSequence(sequenceWithSpeech(kFrameCount, {0, 1, 12, 13, 14}));
+    // Two separated utterances: frames 0..1 and frames 56..58. The 54-frame
+    // silence (1.728 s) is longer than minSilenceFrames and longer than the
+    // 1.5 s utterance merge window, so they are distinct utterances.
+    constexpr std::size_t kFrameCount = 70;
+    detector.setSequence(sequenceWithSpeech(kFrameCount, {0, 1, 56, 57, 58}));
 
     const std::vector<float> kSamples = frameValues(kFrameCount);
     const std::vector<float> kBlock = gate.lastSpeechBlock(kSamples);
 
-    // The last interval starts at sample 12*512 = 6144; the 300 ms pre-roll
-    // reaches back to 1344 (inside frame 2), past the first utterance. The
-    // 200 ms post-roll would reach 10880, but is clipped at the block end
-    // (20 frames = 10240 samples).
-    constexpr std::size_t kExpectedStart = 12 * kFrameSize - 4800;
-    constexpr std::size_t kExpectedEnd = kFrameCount * kFrameSize;
+    // The last interval starts at sample 56*512 = 28672; the 300 ms pre-roll
+    // reaches back to 23872 (inside frame 46, still silence), and the 200 ms
+    // post-roll ends at 59*512 + 3200 = 33408, inside the block. The first
+    // utterance is far outside the selected range.
+    constexpr std::size_t kExpectedStart = 56 * kFrameSize - 4800;
+    constexpr std::size_t kExpectedEnd = 59 * kFrameSize + 3200;
     QCOMPARE(kBlock.size(), kExpectedEnd - kExpectedStart);
     QCOMPARE(kBlock.front(), kSamples[kExpectedStart]);
     QCOMPARE(kBlock.back(), kSamples[kExpectedEnd - 1]);
-    // The first utterance (frames 0..1) is not part of the selected block.
-    QCOMPARE(kBlock.front(), 2.0F);
+    // The block begins in the silence after the first utterance, not inside it.
+    QCOMPARE(kBlock.front(), 46.0F);
+    QCOMPARE(gate.lastSpeechSamples(), 3 * kFrameSize);
+}
+
+// Regression: a natural pause inside one phrase can exceed the segmenter's
+// 512 ms hangover, splitting it into two intervals. Selecting only the final
+// interval truncated the request to the tail of the phrase; the earlier part
+// must be kept when the gap is short enough to be an intra-phrase pause.
+void TestVadGate::test_lastSpeechBlockMergesAPauseInsideAnUtterance() {
+    FakeVoiceActivityDetector detector;
+    audio::VadSpeechGate gate(detector, defaultParameters());
+    // Frames 0..3 and 35..38 with a 31-frame pause (0.992 s) between them:
+    // longer than minSilenceFrames = 2, so the segmenter produces two
+    // intervals, shorter than the 1.5 s merge window, so both belong to the
+    // same utterance.
+    constexpr std::size_t kFrameCount = 60;
+    detector.setSequence(sequenceWithSpeech(kFrameCount, {0, 1, 2, 3, 35, 36, 37, 38}));
+
+    const std::vector<float> kSamples = frameValues(kFrameCount);
+    const std::vector<float> kBlock = gate.lastSpeechBlock(kSamples);
+
+    QCOMPARE(gate.intervals().size(), std::size_t{2});
+    // The block starts at the first part (the pre-roll is clipped at sample 0)
+    // and runs through the last part plus the 200 ms post-roll.
+    constexpr std::size_t kExpectedEnd = 39 * kFrameSize + 3200;
+    QCOMPARE(kBlock.size(), kExpectedEnd);
+    QCOMPARE(kBlock.front(), kSamples.front());
+    QCOMPARE(kBlock.back(), kSamples[kExpectedEnd - 1]);
+    // The pause is part of the block, so the phrase is contiguous for STT.
+    QCOMPARE(kBlock[4 * kFrameSize], 4.0F);
+    // The minimum-speech guard counts the speech of both parts, not the pause.
+    QCOMPARE(gate.lastSpeechSamples(), 8 * kFrameSize);
 }
 
 void TestVadGate::test_lastSpeechBlockClipsPreRollAtBlockStart() {
@@ -242,20 +276,21 @@ void TestVadGate::test_lastSpeechBlockWithEmptyInputReturnsEmpty() {
     QCOMPARE(detector.processCount(), 0);
 }
 
-// Pins the production coupling: with minSilenceFrames = 16 (512 ms) the 300 ms
-// pre-roll is shorter than the gap, so selecting the last interval cannot reach
-// back into the previous utterance. The boundary frame values make an overlap
-// visible even if the size assertion changes.
+// Pins the production coupling: with minSilenceFrames = 16 (512 ms) two
+// utterances separated by more than the 1.5 s merge window stay distinct, so
+// selecting the last utterance cannot reach back into the previous one. The
+// boundary frame values make an overlap visible even if the size assertion
+// changes.
 void TestVadGate::test_lastSpeechBlockPreRollDoesNotReachThePreviousIntervalAtProductionParams() {
     FakeVoiceActivityDetector detector;
     audio::VadSpeechGate gate(detector, {0.5F, 0.15F, 8, 16});
-    constexpr std::size_t kFrameCount = 45;
+    constexpr std::size_t kFrameCount = 80;
 
     std::vector<std::size_t> speechFrames;
     for (std::size_t frame = 0; frame < 8; ++frame) {
         speechFrames.push_back(frame);
     }
-    for (std::size_t frame = 24; frame < 32; ++frame) {
+    for (std::size_t frame = 56; frame < 64; ++frame) {
         speechFrames.push_back(frame);
     }
     detector.setSequence(sequenceWithSpeech(kFrameCount, speechFrames));
@@ -264,14 +299,15 @@ void TestVadGate::test_lastSpeechBlockPreRollDoesNotReachThePreviousIntervalAtPr
     const std::vector<float> kBlock = gate.lastSpeechBlock(kSamples);
 
     QCOMPARE(gate.intervals().size(), std::size_t{2});
-    QCOMPARE(gate.intervals().back().start(), std::size_t{24});
+    QCOMPARE(gate.intervals().back().start(), std::size_t{56});
     QCOMPARE(gate.lastSpeechSamples(), 8 * kFrameSize);
-    // Last interval starts at 24*512 = 12288; the pre-roll reaches 7488, which
-    // is inside the 16-frame silence (frames 8..23), not the first utterance.
-    constexpr std::size_t kExpectedStart = 24 * kFrameSize - 4800;
-    constexpr std::size_t kExpectedEnd = 32 * kFrameSize + 3200;
+    // Last interval starts at 56*512 = 28672; the pre-roll reaches 23872, which
+    // is inside the 48-frame silence (frames 8..55, 1.536 s), not the first
+    // utterance at frames 0..7.
+    constexpr std::size_t kExpectedStart = 56 * kFrameSize - 4800;
+    constexpr std::size_t kExpectedEnd = 64 * kFrameSize + 3200;
     QCOMPARE(kBlock.size(), kExpectedEnd - kExpectedStart);
-    QCOMPARE(kBlock.front(), 14.0F);
+    QCOMPARE(kBlock.front(), 46.0F);
     QCOMPARE(kBlock.back(), kSamples[kExpectedEnd - 1]);
 }
 
