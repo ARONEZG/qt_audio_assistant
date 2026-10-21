@@ -315,56 +315,16 @@ set_target_properties(onnxruntime::onnxruntime PROPERTIES
     INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${onnxruntime_INCLUDE_DIRS}"
 )
 
-# ── Audio library ───────────────────────────────────────────
-# The audio subsystem. It holds three things:
-#   * the framework-agnostic capture contracts (AudioFormat, AudioSource,
-#     AudioSink) and the SPSC ring buffer (AudioBuffer) that implements the
-#     AudioSink port; they depend only on the STL, so a consumer or a test can
-#     use them without pulling Qt or any platform code in;
-#   * the miniaudio implementation translation unit, so the third-party
-#     amalgamation is compiled once and the platform-specific capture code has
-#     a single home behind a narrow interface;
-#   * the concrete MiniaudioCaptureSource: the microphone AudioSource that
-#     resamples the device stream to the canonical format and forwards it into
-#     an injected AudioSink. miniaudio.h stays confined to its .cpp (pimpl), so
-#     the public audio headers remain free of third-party includes.
-add_library(audio-assistant-audio STATIC
-    src/audio/AudioBuffer.cpp
-    src/audio/AudioFormat.cpp
-    src/audio/AudioSink.cpp
-    src/audio/AudioSource.cpp
-    src/audio/MiniaudioCaptureSource.cpp
-    src/audio/MiniaudioImplementation.cpp
-    src/audio/SileroVoiceActivityDetector.cpp
-    src/audio/SpeechSegmenter.cpp
-    src/audio/VadSpeechGate.cpp
-    src/audio/VoiceActivityDetector.cpp
-    src/audio/WavEncoder.cpp
-)
-
-set_target_properties(audio-assistant-audio PROPERTIES
-    CXX_EXTENSIONS OFF
-)
-
-# Consumers include audio headers as "audio/<Header>.h".
-target_include_directories(audio-assistant-audio PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-)
-
-# audio-assistant-qt-warnings is deliberately not linked here: the audio
-# contracts are STL-only and must not inherit Qt/moc-specific suppressions that
-# could hide real diagnostics in future capture code. miniaudio.h stays SYSTEM.
-# onnxruntime is linked PRIVATE: the Silero VAD adapter holds every ONNX type
-# behind a pimpl, so no onnxruntime header ever reaches the public audio
-# headers; the static library's private dependencies are still carried to the
-# final link. Qt6::Core is PRIVATE for the same reason — only the Silero VAD
-# adapter's .cpp reads the model through QFile/QResource (the qrc resource is
-# built into the library); the public audio headers stay Qt-free. The strict
-# profile is linked PRIVATE on purpose: every project-owned TU must see it, and
-# consumers compile against the public headers with their own flags.
-target_link_libraries(audio-assistant-audio
-    PRIVATE audio-assistant-strict miniaudio::miniaudio onnxruntime::onnxruntime Qt6::Core
-)
+# ── Project modules ─────────────────────────────────────────
+# Every module owns its target in the CMakeLists.txt next to its sources, so the
+# dependency versions, compiler profile and Qt discovery stay defined once here
+# and the module files only describe their own sources and links.
+# Order matters only for link dependencies: audio before domain (the domain's
+# capture facade links audio). The QML module is registered by the domain
+# subdirectory, because the domain library is its backing target.
+add_subdirectory(src/logging)
+add_subdirectory(src/audio)
+add_subdirectory(src/domain)
 
 # ── Models resource library ─────────────────────────────────
 # Owns the embedded data assets (silero_vad.onnx + LICENSE/NOTICE) as a Qt
@@ -392,115 +352,6 @@ qt_add_resources(audio-assistant-models "silero_vad_models"
     FILES models/silero_vad/silero_vad.onnx
 )
 
-# ── Domain library ──────────────────────────────────────────
-# The application's QML view models and composition seams (immutable values,
-# provider role interface, collections, the chat/capture controllers). Built as a
-# static library so the executable and every test target link the same
-# implementation, and used as the backing target of the AudioAssistant QML module
-# below (its types are the QML view models).
-add_library(audio-assistant-domain STATIC
-    src/domain/Answer.cpp
-    src/domain/AudioCapture.cpp
-    src/domain/CaptureConfig.cpp
-    src/domain/CaptureConfigFile.cpp
-    src/domain/CaptureConfigSource.cpp
-    src/domain/CapturePresets.cpp
-    src/domain/CaptureSettings.cpp
-    src/domain/Chat.cpp
-    src/domain/Chats.cpp
-    src/domain/ClipboardImageSource.cpp
-    src/domain/ImageAttachment.cpp
-    src/domain/ImageEncoder.cpp
-    src/domain/Message.cpp
-    src/domain/NewChat.cpp
-    src/domain/PasteImage.cpp
-    src/domain/Provider.cpp
-    src/domain/ProviderConfig.cpp
-    src/domain/ProviderConfigFile.cpp
-    src/domain/ProviderConfigSource.cpp
-    src/domain/ProviderErrorText.cpp
-    src/domain/ProviderOffer.cpp
-    src/domain/ProviderSettings.cpp
-    src/domain/Providers.cpp
-    src/domain/SafeMarkdown.cpp
-    src/domain/SttLanguage.cpp
-    src/domain/TranscriptionProvider.cpp
-    src/domain/VoiceInput.cpp
-)
-
-set_target_properties(audio-assistant-domain PROPERTIES
-    CXX_EXTENSIONS OFF
-)
-
-# Consumers include domain headers as "domain/<Header>.h".
-target_include_directories(audio-assistant-domain PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-)
-
-# qmltyperegistrar generates `#if __has_include(<Header.h>)` for the types it
-# registers (it only keeps the header's file name), so the headers must also be
-# reachable by their bare name while the module's registration code compiles.
-target_include_directories(audio-assistant-domain PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/domain
-)
-
-# Qt6::Qml is public because the domain types carry the QML registration macros
-# (QML_ELEMENT) in their headers; every consumer of the headers needs the Qml
-# include path. The types are the view models, so there is no separate adapter.
-# Qt6::Gui is public because ClipboardImageSource exposes a decoded QImage in its
-# role interface (the platform clipboard read happens on the GUI thread, while
-# encoding runs on a worker). Qt6::Concurrent is private: only PasteImage's .cpp
-# uses QtConcurrent::run, and the public contract is asynchronous by signal.
-# The audio library is private too: AudioCapture is the capture-pipeline facade
-# and its header only forward-declares the audio types, so the dependency is an
-# implementation detail (it is still carried to the final link, as CMake does for
-# a static library's private dependencies).
-target_link_libraries(audio-assistant-domain
-    PUBLIC Qt6::Core Qt6::Qml Qt6::Gui
-    PRIVATE audio-assistant-strict audio-assistant-qt-warnings audio-assistant-audio Qt6::Concurrent
-)
-
-# ── QML module ──────────────────────────────────────────────
-# The domain library is the backing target of the AudioAssistant QML module: the
-# C++ types it exposes (Chat, Chats, Providers, Message) are the view models, so
-# a view binds to them directly and no adapter library is needed. QML files are
-# placed at the module root; a resource alias per file keeps them out of a qml/
-# subdirectory (the default would deploy them under /qt/qml/AudioAssistant/qml/).
-set(_audio_assistant_qml_files
-    qml/Main.qml
-    qml/Theme.qml
-    qml/SelectableText.qml
-    qml/MessageDelegate.qml
-    qml/Composer.qml
-    qml/ConversationView.qml
-    qml/ChatPanel.qml
-    qml/ChatView.qml
-    qml/ProviderSettingsPanel.qml
-    qml/CaptureSettingsPanel.qml
-    qml/SettingsDialog.qml
-)
-
-foreach(_qml_file IN LISTS _audio_assistant_qml_files)
-    get_filename_component(_qml_name "${_qml_file}" NAME)
-    set_source_files_properties("${_qml_file}"
-        PROPERTIES QT_RESOURCE_ALIAS "${_qml_name}"
-    )
-endforeach()
-
-# Theme.qml is a `pragma Singleton`; qt_add_qml_module needs the file property
-# (the pragma alone is not enough) so the generated qmldir marks it a singleton.
-set_source_files_properties(qml/Theme.qml
-    PROPERTIES QT_QML_SINGLETON_TYPE TRUE
-)
-
-qt_add_qml_module(audio-assistant-domain
-    URI "AudioAssistant"
-    VERSION 1.0
-    RESOURCE_PREFIX /qt/qml
-    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/qml/AudioAssistant
-    QML_FILES ${_audio_assistant_qml_files}
-)
-
 # ── Main executable ─────────────────────────────────────────
 add_executable(audio-assistant
     src/app/ClipboardImageEncoder.cpp
@@ -509,7 +360,6 @@ add_executable(audio-assistant
     src/app/PlaceholderProvider.cpp
     src/app/SystemClipboard.cpp
     src/main.cpp
-    src/logging/LogBridge.cpp
 )
 
 set_target_properties(audio-assistant PROPERTIES
@@ -519,6 +369,7 @@ set_target_properties(audio-assistant PROPERTIES
 target_link_libraries(audio-assistant PRIVATE
     audio-assistant-strict
     audio-assistant-qt-warnings
+    audio-assistant-logging
     audio-assistant-audio
     audio-assistant-models
     audio-assistant-domain
@@ -1116,38 +967,22 @@ audio_assistant_add_qml_test(tst_main
 target_link_libraries(tst_main PRIVATE audio-assistant-audio)
 
 # ── Logging tests ───────────────────────────────────────────
+# The bridge itself comes from audio-assistant-logging; the test links the same
+# warning profiles as the other Qt targets instead of duplicating the flag list.
 qt_add_executable(tst_logging
     tests/tst_logging.cpp
-    src/logging/LogBridge.cpp
 )
 
 set_target_properties(tst_logging PROPERTIES
     CXX_EXTENSIONS OFF
 )
 
-target_compile_options(tst_logging PRIVATE
-    -std=c++20
-    -Wall -Wextra -Wpedantic -Werror
-    -Weverything
-    -Wno-c++98-compat
-    -Wno-c++98-compat-pedantic
-    -Wno-c++20-compat
-    -Wno-unknown-warning-option
-    -Wno-padded  # moc-generated meta code may have padding on structs
-    -Wconversion -Wsign-conversion -Wimplicit-fallthrough
-    -Wcast-align -Wcast-qual -Wdouble-promotion -Wformat=2
-    -Wnull-dereference -Woverloaded-virtual -Wshadow-all
-    -Wswitch-enum -Wundef -Wunreachable-code -Wunused
-)
-
-target_include_directories(tst_logging PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
 target_link_libraries(tst_logging PRIVATE
+    audio-assistant-strict
+    audio-assistant-qt-warnings
+    audio-assistant-logging
     Qt6::Core
     Qt6::Test
-    spdlog::spdlog
 )
 
 add_test(NAME tst_logging COMMAND tst_logging)
