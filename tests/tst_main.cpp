@@ -116,6 +116,23 @@ QObject* findInItems(QQuickItem* root, const QString& name) {
                                : findInItems(qobject_cast<QQuickItem*>(delegate), QStringLiteral("messageText"));
 }
 
+// Whether a view (a Flickable, so a ListView too) shows the end of its content.
+[[nodiscard]] bool isScrolledToEnd(QQuickItem* view) {
+    return view->property("contentY").toReal() + view->height() >= view->property("contentHeight").toReal() - 1.0;
+}
+
+// A reply far taller than one chat panel: its streaming tail overflows the
+// transcript viewport, so the list has history to scroll back into. Markdown
+// joins single newlines into one paragraph, so the line count must leave enough
+// wrapped text for several viewports.
+[[nodiscard]] QString longReasoning() {
+    QString text;
+    for (int line = 0; line < 1000; ++line) {
+        text += QStringLiteral("reasoning line %1\n").arg(line);
+    }
+    return text;
+}
+
 // The rectangle of `item` that is actually painted, in `root` coordinates: the
 // item's laid-out rect intersected with every clipping ancestor. A view clips
 // its content, so the laid-out rect alone would report content that never
@@ -426,6 +443,7 @@ private slots:
     void test_streamingTailIsSelectableAndCopyable();
     void test_streamingTailFollowsEachAnswer();
     void test_streamingTailStaysInsideTheChatPanel();
+    void test_streamingTailFollowsOnlyWhileAtTheEnd();
     void test_chatFailureShowsTheError();
     void test_backgroundCaptureToggleStartsOff();
     void test_backgroundCaptureToggleStartsAndStopsCapture();
@@ -897,6 +915,58 @@ void TestQmlChat::test_streamingTailStaysInsideTheChatPanel() {
     QVERIFY(QTest::qWaitFor([transcript] {
         return transcript->property("contentY").toReal() + transcript->height() >=
                transcript->property("contentHeight").toReal() - 1.0;
+    }));
+}
+
+// The transcript follows a growing answer only while its end is on screen: a
+// user who scrolls back into the history keeps their place, and returning to the
+// end resumes following. This is the regression for the list jumping to the
+// bottom on every chunk - and on every delegate it materialises while scrolling.
+void TestQmlChat::test_streamingTailFollowsOnlyWhileAtTheEnd() {
+    Harness harness;
+    QCoreApplication::processEvents();
+    auto* window = qobject_cast<QQuickWindow*>(harness.root());
+    QVERIFY(window != nullptr);
+
+    Chat* chat = harness.chats().at(0);
+    chat->send(QStringLiteral("hi"));
+    harness.minted().at(0)->lastAnswer()->appendChunk(longReasoning());
+
+    QQuickItem* transcript =
+            qobject_cast<QQuickItem*>(findInItems(window->contentItem(), QStringLiteral("transcript")));
+    QVERIFY(transcript != nullptr);
+    // The tail is followed to the end first, once it fills more than one
+    // viewport (a not-yet-laid-out tail trivially "ends" at zero height).
+    QVERIFY(QTest::qWaitFor([transcript] {
+        return transcript->property("contentHeight").toReal() >= 2 * transcript->height() &&
+               isScrolledToEnd(transcript);
+    }));
+
+    // The user scrolls one viewport back into the history.
+    const double kReadBack =
+            transcript->property("contentHeight").toReal() - transcript->height() - transcript->height();
+    QVERIFY(kReadBack >= 0.0);
+    QVERIFY(transcript->setProperty("contentY", kReadBack));
+    QCoreApplication::processEvents();
+    QCOMPARE(transcript->property("contentY").toReal(), kReadBack);
+
+    // The next chunk adds content without pulling the user back down. The live
+    // markup is republished at the domain's throttle cadence, so poll instead of
+    // assuming one event-loop pass.
+    const double kContentHeightWhileReading = transcript->property("contentHeight").toReal();
+    harness.minted().at(0)->lastAnswer()->appendChunk(QStringLiteral("\n\nsecond reasoning paragraph\n"));
+    QVERIFY(QTest::qWaitFor([transcript, kContentHeightWhileReading] {
+        return transcript->property("contentHeight").toReal() > kContentHeightWhileReading;
+    }));
+    QCOMPARE(transcript->property("contentY").toReal(), kReadBack);
+
+    // Returning to the end resumes following: the next chunk scrolls again.
+    const double kEnd = transcript->property("contentHeight").toReal() - transcript->height();
+    QVERIFY(transcript->setProperty("contentY", kEnd));
+    const double kContentHeightAtEnd = transcript->property("contentHeight").toReal();
+    harness.minted().at(0)->lastAnswer()->appendChunk(QStringLiteral("\n\nthird reasoning paragraph\n"));
+    QVERIFY(QTest::qWaitFor([transcript, kContentHeightAtEnd] {
+        return transcript->property("contentHeight").toReal() > kContentHeightAtEnd && isScrolledToEnd(transcript);
     }));
 }
 
