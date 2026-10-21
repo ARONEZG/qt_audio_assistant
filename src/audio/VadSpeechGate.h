@@ -80,22 +80,27 @@ public:
     [[nodiscard]] std::vector<float> trimSilence(std::span<const float> samples);
 
     // Convenience one-shot for the capture pipeline: runs the same VAD pass as
-    // trimSilence() but returns only the LAST speech interval, extended by a
-    // 300 ms pre-roll and a 200 ms post-roll taken from the original block.
-    // The padding preserves word onsets/endings that a frame-aligned cut would
+    // trimSilence() but returns only the LAST utterance, extended by a 300 ms
+    // pre-roll and a 200 ms post-roll taken from the original block. The
+    // padding preserves word onsets/endings that a frame-aligned cut would
     // clip; it is clipped to the block boundaries. An empty result means no
     // speech was detected, so the caller must not send a request.
     //
-    // Invariant: the pre-roll must stay shorter than the segmenter's
-    // minSilenceFrames * 512, otherwise it can reach into the previous
-    // interval. The production parameters (minSilenceFrames = 16, 512 ms) hold
-    // this for the 300 ms pre-roll; tst_vadgate pins the combination.
+    // A pause inside one phrase can still exceed the segmenter's hangover even
+    // with minSilenceFrames = 16 (512 ms), so the utterance is the cluster of
+    // the last interval plus its immediately preceding intervals whose gaps are
+    // within the merge window (1.5 s, see VadSpeechGate.cpp). The cluster
+    // starts at the first interval's start and ends at the last interval's end,
+    // so the pause between its parts is included but old, unrelated speech is
+    // not. This keeps the request tied to the current phrase instead of the
+    // whole capture window.
     [[nodiscard]] std::vector<float> lastSpeechBlock(std::span<const float> samples);
 
-    // The number of samples in the last detected speech interval, before the
-    // pre/post-roll was added. Valid after lastSpeechBlock(); zero when no
-    // speech was found. Callers use it to apply a minimum-speech policy without
-    // counting padding as speech.
+    // The number of detected speech samples in the last utterance cluster,
+    // before the pre/post-roll was added (pauses between its intervals are not
+    // counted). Valid after lastSpeechBlock(); zero when no speech was found.
+    // Callers use it to apply a minimum-speech policy without counting padding
+    // as speech.
     [[nodiscard]] std::size_t lastSpeechSamples() const noexcept;
 
     // The number of PCM samples consumed by feedSamples() so far, including the
@@ -110,6 +115,11 @@ private:
     // previous stream and feeds the whole block through the detector, leaving
     // intervals_ and probabilities_ ready for a query.
     void analyze(std::span<const float> samples);
+
+    // Index of the first interval of the last utterance cluster: walks back
+    // from the final interval while the gap to the previous one stays inside
+    // the merge window. Precondition: intervals_ is not empty.
+    [[nodiscard]] std::size_t lastUtteranceFirstInterval() const noexcept;
 
     VoiceActivityDetector& detector_;
     SpeechSegmenter segmenter_;

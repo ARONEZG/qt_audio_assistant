@@ -251,8 +251,10 @@ struct VadPipeline {
 [[nodiscard]] VadPipeline createVadPipeline() {
     try {
         auto detector = std::make_unique<audio::SileroVoiceActivityDetector>();
-        // minSilenceFrames 16 = 512 ms: a natural pause inside a question no
-        // longer cuts its tail off into a separate (discarded) interval.
+        // minSilenceFrames 16 = 512 ms bridges short pauses inside a phrase.
+        // Longer natural pauses still split the stream into intervals; the gate
+        // re-merges the fresh ones into one utterance (1.5 s merge window, see
+        // VadSpeechGate.cpp), so the phrase is not truncated to its tail.
         auto gate = std::make_unique<audio::VadSpeechGate>(*detector,
                                                            audio::SpeechSegmenter::Parameters{0.5F, 0.15F, 8, 16});
         return {std::move(detector), std::move(gate)};

@@ -104,8 +104,12 @@ bool AudioCapture::selectLastUtterance(audio::VadSpeechGate& gate, std::vector<f
     snapshot = gate.lastSpeechBlock(std::span<const float>(snapshot));
     const qint64 kVadMs = stageTimer.elapsed();
     const std::size_t kSpeechSamples = gate.lastSpeechSamples();
-    qInfo() << "Transcription timing: snapshotMs=" << snapshotMs << "vadMs=" << kVadMs << "kept" << snapshot.size()
-            << "of" << kCapturedSamples << "samples (speech" << kSpeechSamples << ")";
+    // intervals= makes a split phrase visible in the field log: the selected
+    // utterance is the final cluster of intervals, so a value above one means a
+    // pause divided the phrase and the gate merged its parts back together.
+    qInfo() << "Transcription timing: snapshotMs=" << snapshotMs << "vadMs=" << kVadMs
+            << "intervals=" << gate.intervals().size() << "kept" << snapshot.size() << "of" << kCapturedSamples
+            << "samples (speech" << kSpeechSamples << ")";
 
     // No speech means there is nothing to recognise. Report it locally instead
     // of sending an empty block to the network: the user gets an honest reason
